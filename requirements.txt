@@ -1,0 +1,17 @@
+Django
+langchain
+langchain-classic
+langchain-community
+langchain-core
+langchain-text-splitters
+langgraph
+langgraph-checkpoint
+langgraph-prebuilt
+langgraph-sdk
+langsmith
+Markdown
+numpy
+ollama
+pillow
+python-dotenv
+requests
