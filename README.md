@@ -5,15 +5,17 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 ## Features
 
 - Real-time chat UI with session-based conversation history
-- Multiple model selection (GLM, DeepSeek, Qwen, GPT-OSS, Nemotron, Minimax)
+- Multiple model selection (Gemini, Gemma, GLM, DeepSeek, Qwen, GPT-OSS, Nemotron, Minimax)
 - Automatic chat title generation for new sessions
 - Persistent storage of chat sessions and message history in PostgreSQL
 - Sidebar session list with "resume previous chat" behavior
+- Session deletion from sidebar (right-click / long-press)
 - Markdown rendering for AI responses (code blocks, tables, fenced code)
 - Django admin support for inspecting chat records
 - Dynamic website settings (name, favicon, description) via database
 - Maintenance mode middleware support
 - Token usage tracking (`input_tokens`, `output_tokens`) per conversation
+- Cloud usage panel (input/output/total tokens)
 
 ## Tech Stack
 
@@ -43,6 +45,8 @@ ollama_ai/
 ├── public/static/
 │   ├── css/style.css        # Chat UI styles
 │   ├── js/ollama.js         # Frontend chat logic
+│   ├── js/delete-sessions.js # Session deletion handler
+│   ├── js/usage.js          # Usage panel fetch logic
 │   └── favicons/            # Uploaded favicon/media files
 ├── templates/
 │   └── chat.html            # Chat interface
@@ -90,7 +94,7 @@ Main runtime dependencies used directly by this project:
 
 Also present in `requirements.txt`:
 
-- `langgraph*`, `langsmith`, `numpy`, `pillow`, `requests`, `gunicorn`
+- `langgraph*`, `langsmith`, `numpy`, `requests`, `gunicorn`
 
 ## Installation
 
@@ -190,8 +194,12 @@ python3 manage.py test
     - `user_message`
     - `ai_message` (HTML rendered markdown)
     - `model`
+    - `model_key`
     - `session_id`
     - `title`
+    - `input_tokens`
+    - `output_tokens`
+    - `total_tokens`
 
 - `GET /chat/history/<session_id>/`
   - Fetch full conversation history for one session.
@@ -205,10 +213,19 @@ python3 manage.py test
 - `GET /chat/api/<session_id>/`
   - Returns one conversation item for the given session (legacy/debug route).
 
+- `GET /api/usage-stats/`
+  - Returns aggregated usage:
+    - `total_input_tokens`
+    - `total_output_tokens`
+    - `total_tokens`
+    - `total_conversations`
+
 ## Supported Model Keys
 
 Defined in `app/ollama.py`:
 
+- `gemini-3-flash-preview` -> `gemini-3-flash-preview:cloud`
+- `gemma3` -> `gemma3:27b-cloud`
 - `glm-5` -> `glm-5:cloud`
 - `glm-4.7` -> `glm-4.7:cloud`
 - `gpt-oss` -> `gpt-oss:120b-cloud`
@@ -255,6 +272,8 @@ Defined in `app/ollama.py`:
 - `app/middlewares/constructions.py`: maintenance mode behavior
 - `app/utils.py`: website settings context processor
 - `public/static/js/ollama.js`: chat frontend interactions and session model lock
+- `public/static/js/delete-sessions.js`: sidebar delete action handlers
+- `public/static/js/usage.js`: usage dashboard fetch/format logic
 - `public/static/css/style.css`: visual theme/layout
 - `templates/chat.html`: UI/UX and client-side interactions
 - `ollama_ai/settings.py`: project settings, static/media, security
