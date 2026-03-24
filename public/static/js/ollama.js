@@ -29,17 +29,6 @@ function addSidebarSession(title, sessionId) {
 
   if (sessionId === currentSessionId) item.classList.add("active");
 
-  function handleDelete() {
-    const confirmDelete = confirm("Are you sure you want to delete this session?");
-    if (confirmDelete) {
-      deleteSession(sessionId);
-      item.remove();
-      if (sessionId === currentSessionId) {
-        startNewChat();
-      }
-    }
-  }
-
   let pressTimer;
   let isLongPress = false;
 
@@ -63,7 +52,18 @@ function addSidebarSession(title, sessionId) {
 
   item.addEventListener("touchmove", function (e) {
     clearTimeout(pressTimer);
-  })
+  });
+
+  function handleDelete() {
+    const confirmDelete = confirm("Are you sure you want to delete this session?");
+    if (confirmDelete) {
+      deleteSession(sessionId);
+      item.remove();
+      if (sessionId === currentSessionId) {
+        startNewChat();
+      }
+    }
+  }
 
   item.addEventListener("click", () => {
     document
