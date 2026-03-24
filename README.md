@@ -13,6 +13,7 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 - Django admin support for inspecting chat records
 - Dynamic website settings (name, favicon, description) via database
 - Maintenance mode middleware support
+- Token usage tracking (`input_tokens`, `output_tokens`) per conversation
 
 ## Tech Stack
 
@@ -233,6 +234,8 @@ Defined in `app/ollama.py`:
 - `session` (FK -> `ChatSession`)
 - `user_message`
 - `ai_message`
+- `input_tokens`
+- `output_tokens`
 - `created_at`
 - `updated_at`
 
