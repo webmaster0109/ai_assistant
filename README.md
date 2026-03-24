@@ -59,6 +59,27 @@ ollama_ai/
 - Python 3.13+ installed
 - Network access to an Ollama-compatible host
 - Valid API key for your Ollama host
+- `pip` available in your Python environment
+
+## Required Python Packages
+
+Install everything from `requirements.txt`:
+
+```bash
+pip install -r requirements.txt
+```
+
+Main runtime dependencies used directly by this project:
+
+- `Django`
+- `langchain`, `langchain-community`, `langchain-core`
+- `ollama`
+- `python-dotenv`
+- `Markdown`
+
+Also present in `requirements.txt`:
+
+- `langgraph*`, `langsmith`, `numpy`, `pillow`, `requests`, `gunicorn`
 
 ## Installation
 
@@ -71,7 +92,14 @@ ollama_ai/
 ```bash
 python3 -m venv venv
 source venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+If you open a new terminal, activate the environment again before running Django commands:
+
+```bash
+source venv/bin/activate
 ```
 
 ## Environment Variables
@@ -111,6 +139,15 @@ Open:
 
 - App: `http://127.0.0.1:8000/`
 - Admin: `http://127.0.0.1:8000/admin/`
+
+## Verify Setup
+
+Run these checks after installation:
+
+```bash
+python3 manage.py check
+python3 manage.py test
+```
 
 ## API Endpoints
 
@@ -207,6 +244,7 @@ python3 manage.py test
 
 - `ModuleNotFoundError` (e.g., `markdown`):
   - Ensure virtual env is active and run `pip install -r requirements.txt`.
+  - If it still fails, run `pip install Markdown` and re-run `python3 manage.py check`.
 - Model request fails:
   - Verify `.env` values and API key validity.
   - Confirm `OLLAMA_HOST` is reachable.
