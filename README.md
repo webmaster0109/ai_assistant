@@ -18,7 +18,7 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 - Django 6
 - LangChain (`langchain`, `langchain-community`, `langchain-core`)
 - Ollama Python client (`ollama`)
-- SQLite (default DB)
+- PostgreSQL (via `DATABASE_URL`)
 - Frontend: server-rendered HTML/CSS/JS (no separate SPA build)
 
 ## Project Structure
@@ -40,7 +40,7 @@ ollama_ai/
 │   └── chat.html            # Chat interface
 ├── requirements.txt
 ├── manage.py
-└── db.sqlite3
+└── README.md
 ```
 
 ## How It Works
@@ -57,6 +57,7 @@ ollama_ai/
 ## Prerequisites
 
 - Python 3.13+ installed
+- PostgreSQL server (local or remote)
 - Network access to an Ollama-compatible host
 - Valid API key for your Ollama host
 - `pip` available in your Python environment
@@ -76,6 +77,7 @@ Main runtime dependencies used directly by this project:
 - `ollama`
 - `python-dotenv`
 - `Markdown`
+- `psycopg2-binary`
 
 Also present in `requirements.txt`:
 
@@ -109,14 +111,27 @@ Create a `.env` file in the project root:
 ```env
 OLLAMA_API_KEY=your_api_key_here
 OLLAMA_HOST=https://your-ollama-host
+DATABASE_URL=postgresql://username:password@host:5432/database_name
 ```
 
 Used in:
 
 - `app/ollama.py`
 - `app/langchain.py`
+- `ollama_ai/settings.py`
 
-## Database Setup
+## Database Setup (PostgreSQL)
+
+The current settings are configured for PostgreSQL using `DATABASE_URL`.
+
+Example URL formats:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/ollama_ai
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/ollama_ai
+```
+
+After DB config is ready, run:
 
 ```bash
 python3 manage.py makemigrations
@@ -242,9 +257,15 @@ python3 manage.py test
 
 ## Troubleshooting
 
+- `ModuleNotFoundError: No module named 'dotenv'`:
+  - Install project requirements: `pip install -r requirements.txt`
+  - Ensure virtual environment is activated before running Django commands.
 - `ModuleNotFoundError` (e.g., `markdown`):
   - Ensure virtual env is active and run `pip install -r requirements.txt`.
   - If it still fails, run `pip install Markdown` and re-run `python3 manage.py check`.
+- Database config errors (`DATABASE_URL` missing/invalid):
+  - Add `DATABASE_URL` in `.env` (PostgreSQL connection string).
+  - Ensure PostgreSQL is reachable with those credentials.
 - Model request fails:
   - Verify `.env` values and API key validity.
   - Confirm `OLLAMA_HOST` is reachable.
@@ -263,7 +284,7 @@ python3 manage.py test
 - Suggested production steps:
   - Set `DEBUG=False`
   - Configure strict `ALLOWED_HOSTS`
-  - Use a proper production database (PostgreSQL/MySQL) instead of SQLite
+  - Keep PostgreSQL credentials in environment variables only
   - Serve static files via Nginx/CDN
 
 ## License
