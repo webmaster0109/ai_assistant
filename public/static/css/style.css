@@ -89,6 +89,7 @@ th {
   overflow-y: auto;
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 101;
+  justify-content: space-between;
 }
 
 .sidebar-header {
@@ -144,6 +145,7 @@ th {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
   overflow-y: auto;
 }
 
@@ -171,6 +173,56 @@ th {
   background: rgba(124, 106, 255, 0.15);
   color: var(--white);
   border-color: rgba(124, 106, 255, 0.3);
+}
+
+.usage-panel {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: auto;
+}
+
+.usage-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--accent2);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+}
+
+.usage-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.usage-label {
+    font-size: 0.78rem;
+    color: var(--muted);
+}
+
+.usage-value {
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+}
+
+.usage-total {
+    color: var(--accent2);
+    font-weight: 700;
+}
+
+.usage-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 2px 0;
 }
 
 /* ── Main area ────────────────────────────────── */

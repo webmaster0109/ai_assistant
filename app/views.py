@@ -4,7 +4,8 @@ from django.http import JsonResponse
 import markdown
 from .langchain import conversation_chain, generate_title
 from .models import ChatSession, ChatConversations
-from .utils import cloud_usage_stats
+from .utils import cloud_usage_stats, usage_stats
+import json 
 
 
 def api_ai_message(request, session_id):
@@ -45,7 +46,9 @@ def chat_post(request):
         input_tokens=usage.get('input_tokens', 0),
         output_tokens=usage.get('output_tokens', 0)
       )
-
+    
+    usage = usage_stats()
+    print(f"[DEBUG] usage: {usage}")
     print(f"[DEBUG] session_id: {session.id} | message: {message} | model: {model}")
     return JsonResponse({
       "user_message": message, 
@@ -54,6 +57,9 @@ def chat_post(request):
       "title": session.title,
       "model": session.model.upper(),
       "model_key": session.model,
+      "input_tokens": usage.get('input_tokens', 0),
+      "output_tokens": usage.get('output_tokens', 0),
+      "total_tokens": (usage.get('input_tokens', 0) + usage.get('output_tokens', 0)),
       }, status=200)
 
 

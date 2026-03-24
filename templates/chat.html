@@ -22,10 +22,27 @@
         <span class="sidebar-title">{{website_name}}</span>
         <button id="close-sidebar-btn" onclick="closeSidebar()">✕</button>
       </div>
-
       <button id="new-chat-btn" onclick="startNewChat()">+ New Chat</button>
 
       <div id="sidebar-sessions" class="sidebar-sessions"></div>
+
+      <!-- ── Usage Panel — bottom ── -->
+      <div class="usage-panel" id="usage-panel">
+          <div class="usage-title">⚡ Cloud Usage</div>
+          <div class="usage-row">
+              <span class="usage-label">Input Tokens</span>
+              <span class="usage-value" id="usage-input">—</span>
+          </div>
+          <div class="usage-row">
+              <span class="usage-label">Output Tokens</span>
+              <span class="usage-value" id="usage-output">—</span>
+          </div>
+          <div class="usage-divider"></div>
+          <div class="usage-row">
+              <span class="usage-label">Total Tokens</span>
+              <span class="usage-value usage-total" id="usage-total">—</span>
+          </div>
+      </div>
     </div>
 
     <!-- ── Main area ──────────────────────────── -->
@@ -73,6 +90,8 @@
       </div>
     </div>
 
+  <script src="/media/js/usage.js"></script>
+  <script src="/media/js/delete-sessions.js"></script>
   <script src="/media/js/ollama.js"></script>
 
 </body>

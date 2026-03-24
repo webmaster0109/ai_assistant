@@ -25,12 +25,16 @@ def context_processors(request, settings):
     'website_favicon': (django_settings.MEDIA_URL + settings.get('website_favicon') if settings.get('website_favicon') else None),
   }
 
-def cloud_usage_stats(request):
-  stats = ChatConversations.objects.aggregate(
+def usage_stats():
+  stats = ChatConversations.objects.values('input_tokens', 'output_tokens').aggregate(
     total_input_tokens=Sum('input_tokens'),
     total_output_tokens=Sum('output_tokens'),
     total_conversations=Count('id')
   )
+  return stats
+
+def cloud_usage_stats(request):
+  stats = usage_stats()
   total_tokens = (stats['total_input_tokens'] or 0) + (stats['total_output_tokens'] or 0)
   return JsonResponse({
     'total_input_tokens': stats['total_input_tokens'] or 0,

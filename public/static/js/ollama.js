@@ -29,6 +29,32 @@ function addSidebarSession(title, sessionId) {
 
   if (sessionId === currentSessionId) item.classList.add("active");
 
+  item.addEventListener("contextmenu", function (e) {
+    e.preventDefault();
+    const confirmDelete = confirm("Are you sure you want to delete this session?");
+    if (confirmDelete) {
+      deleteSession(sessionId);
+      item.remove();
+      if (sessionId === currentSessionId) {
+        startNewChat();
+      }
+    }
+  })
+
+  let pressTimer;
+  item.addEventListener("touchstart", function (e) {
+    pressTimer = setTimeout(() => {
+      const confirmDelete = confirm("Do you want to delete this session?");
+      if (confirmDelete) {
+        deleteSession(sessionId);
+        item.remove();
+        if (sessionId === currentSessionId) {
+          startNewChat();
+        }
+      }
+    }, 600);
+  });
+
   item.addEventListener("click", () => {
     document
       .querySelectorAll(".sidebar-item")
@@ -52,6 +78,7 @@ async function loadAllSessions() {
 
     // Restore last active session
     if (currentSessionId) loadSession(currentSessionId);
+
   } catch (err) {
     console.error("[loadAllSessions] Failed:", err);
   }
@@ -71,17 +98,19 @@ function createChatContainer() {
 
 function appendMessages(userMessage, aiMessage, modelName) {
   const container = createChatContainer();
-
+ 
   const userMsg = document.createElement("p");
   userMsg.classList.add("user-message");
   userMsg.innerHTML = `<strong>USER: </strong>${userMessage}`;
-
+  
   const aiMsg = document.createElement("div");
   aiMsg.classList.add("ai-message");
   aiMsg.innerHTML = `<strong>${modelName || "AI"}:</strong> ${aiMessage}`;
-
+  
   container.appendChild(userMsg);
   container.appendChild(aiMsg);
+
+  // console.log(container);
   chatBox.scrollTop = chatBox.scrollHeight;
 }
 
@@ -187,6 +216,12 @@ async function sendMessage(e) {
       }
       lockModelDropdown(currentSessionModel);
       appendMessages(result.user_message, result.ai_message, result.model);
+      loadUsageStats();
+
+      if (result.input_tokens || result.output_tokens) {
+        updateUsageInstant(result.input_tokens, result.output_tokens);
+      }
+
       messageInput.value = "";
     } else {
       console.error("[sendMessage] Server error:", result);
@@ -198,6 +233,15 @@ async function sendMessage(e) {
     messageInput.disabled = false;
     messageInput.focus();
   }
+}
+
+function updateUsageInstant(inputTokens, outputTokens) {
+    const currentTotal = parseInt(
+        document.querySelector('#usage-total').textContent.replace(/[KM]/g, '') 
+    ) || 0;
+
+    // Just re-fetch — simplest approach
+    loadUsageStats();
 }
 
 // ── Load session history ──────────────────────────────────────
