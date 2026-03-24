@@ -13,7 +13,7 @@ load_dotenv()
 
 # Persists across requests for the lifetime of the Django process
 store = {}
-MAX_MESSAGES = 100
+MAX_MESSAGES = 20
 
 def get_session_history(session_id: str) -> ChatMessageHistory:
     if session_id not in store:
@@ -85,6 +85,10 @@ def conversation_chain(models, question, session_id="default"):
         headers={"Authorization": "Bearer " + os.getenv("OLLAMA_API_KEY")},
         temperature=0.7,
         # system=system_prompt
+        # response length
+        num_predict=4096,  
+        # total context window (history + response)
+        num_ctx=8192,
     )
 
     runnable = RunnableWithMessageHistory(

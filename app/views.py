@@ -28,29 +28,31 @@ def chat_post(request):
       session = ChatSession.objects.filter(id=session_id).first()
       if not session:
         return JsonResponse({"error": "Session not found"}, status=404)
+      model = session.model
     else:
       title = generate_title(message)
       session = ChatSession.objects.create(model=model, title=title)
     
     response = conversation_chain(model, message, session_id=session.id)
-
-    ChatConversations.objects.create(
-        session=session,
-        user_message=message,
-        ai_message=response
-      )
-
     html_response = markdown.markdown(
       response,
       extensions=["fenced_code", "codehilite", "tables"]
     )
+
+    ChatConversations.objects.create(
+        session=session,
+        user_message=message,
+        ai_message=html_response,
+      )
+
     print(f"[DEBUG] session_id: {session.id} | message: {message} | model: {model}")
     return JsonResponse({
       "user_message": message, 
       "ai_message": html_response, 
-      "model": model.upper(), 
       "session_id": session.id,
-      "title": session.title
+      "title": session.title,
+      "model": session.model.upper(),
+      "model_key": session.model,
       }, status=200)
 
 
@@ -72,11 +74,11 @@ def chat_history_conversations(request, session_id):
         'created_at'
       ).order_by('created_at')
   )
-  for convo in conversations:
-    convo['ai_message'] = markdown.markdown(
-      convo['ai_message'], 
-      extensions=["fenced_code", "codehilite", "tables"]
-    )
+  # for convo in conversations:
+  #   convo['ai_message'] = markdown.markdown(
+  #     convo['ai_message'], 
+  #     extensions=["fenced_code", "codehilite", "tables"]
+  #   )
   return JsonResponse(conversations, safe=False, status=200)
 
 def chat_sessions(request):
