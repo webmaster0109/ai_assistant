@@ -70,8 +70,9 @@ def generate_title(question):
   return chain.invoke({"input": question}).content.strip()
 
 def conversation_chain(models, question, session_id="default"):
-
-    system_prompt = SYSTEM_PROMPTS | "You are a helpful and precise assistant for answering user queries."
+    if SYSTEM_PROMPTS == "":
+      system_prompt = "You are a helpful and precise assistant for answering user queries."
+    system_prompt = SYSTEM_PROMPTS
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=system_prompt),
         MessagesPlaceholder(variable_name="history"),
