@@ -7,10 +7,12 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 - Real-time chat UI with session-based conversation history
 - Multiple model selection (GLM, DeepSeek, Qwen, GPT-OSS, Nemotron, Minimax)
 - Automatic chat title generation for new sessions
-- Persistent storage of chat sessions and message history in SQLite
+- Persistent storage of chat sessions and message history in PostgreSQL
 - Sidebar session list with "resume previous chat" behavior
 - Markdown rendering for AI responses (code blocks, tables, fenced code)
 - Django admin support for inspecting chat records
+- Dynamic website settings (name, favicon, description) via database
+- Maintenance mode middleware support
 
 ## Tech Stack
 
@@ -27,6 +29,7 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 ollama_ai/
 ├── app/
 │   ├── langchain.py         # LLM + memory orchestration
+│   ├── middlewares/         # Custom middleware
 │   ├── models.py            # ChatSession and ChatConversations models
 │   ├── ollama.py            # Ollama host/client + model mapping
 │   ├── prompts.py           # System prompt text
@@ -36,6 +39,10 @@ ollama_ai/
 ├── ollama_ai/
 │   ├── settings.py          # Django settings
 │   └── urls.py              # Root URL configuration
+├── public/static/
+│   ├── css/style.css        # Chat UI styles
+│   ├── js/ollama.js         # Frontend chat logic
+│   └── favicons/            # Uploaded favicon/media files
 ├── templates/
 │   └── chat.html            # Chat interface
 ├── requirements.txt
@@ -78,6 +85,7 @@ Main runtime dependencies used directly by this project:
 - `python-dotenv`
 - `Markdown`
 - `psycopg2-binary`
+- `pillow`
 
 Also present in `requirements.txt`:
 
@@ -143,6 +151,8 @@ Optional admin user:
 ```bash
 python3 manage.py createsuperuser
 ```
+
+Then login at `/admin/` and configure `WebsiteSettings` (site name, description, favicon, maintenance mode) if needed.
 
 ## Run Locally
 
@@ -226,22 +236,34 @@ Defined in `app/ollama.py`:
 - `created_at`
 - `updated_at`
 
+### `WebsiteSettings`
+
+- `website_name`
+- `website_logo`
+- `website_favicon`
+- `website_description`
+- `maintainance_mode`
+
 ## Key Files You May Customize
 
 - `app/prompts.py`: system prompt/persona behavior
 - `app/ollama.py`: model mapping
 - `app/langchain.py`: memory length (`MAX_MESSAGES`), chain behavior
+- `app/middlewares/constructions.py`: maintenance mode behavior
+- `app/utils.py`: website settings context processor
+- `public/static/js/ollama.js`: chat frontend interactions and session model lock
+- `public/static/css/style.css`: visual theme/layout
 - `templates/chat.html`: UI/UX and client-side interactions
 - `ollama_ai/settings.py`: project settings, static/media, security
 
 ## Static and Media
 
-- `STATIC_URL = 'static/'`
+- `STATIC_URL = '/static/'`
 - `STATIC_ROOT = BASE_DIR/staticfiles`
-- `MEDIA_URL = '/media/'`
-- `MEDIA_ROOT = BASE_DIR/media`
+- `MEDIA_URL = '/media/'` (used for frontend CSS/JS and uploaded media in current setup)
+- `MEDIA_ROOT = BASE_DIR/public/static`
 
-During development (`DEBUG=True`), static and media routes are served by Django in `ollama_ai/urls.py`.
+During development (`DEBUG=True`), media routes are served by Django in `ollama_ai/urls.py`, and static URLs are added via `staticfiles_urlpatterns()`.
 
 ## Useful Commands
 

@@ -12,10 +12,11 @@
   --surface2: #1c1c20;
   --border: #2a2a30;
   --accent: #7c6aff;
-  --accent2: #130c27;
+  --accent2: #6236db;
   --text: #e8e8f0;
   --muted: #6b6b7a;
   --user-col: #6aff9c;
+  --white: #fff;
   --radius: 12px;
 }
 
@@ -168,7 +169,7 @@ th {
 }
 .sidebar-item.active {
   background: rgba(124, 106, 255, 0.15);
-  color: var(--muted);
+  color: var(--white);
   border-color: rgba(124, 106, 255, 0.3);
 }
 
