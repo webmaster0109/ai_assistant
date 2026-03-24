@@ -29,8 +29,7 @@ function addSidebarSession(title, sessionId) {
 
   if (sessionId === currentSessionId) item.classList.add("active");
 
-  item.addEventListener("contextmenu", function (e) {
-    e.preventDefault();
+  function handleDelete() {
     const confirmDelete = confirm("Are you sure you want to delete this session?");
     if (confirmDelete) {
       deleteSession(sessionId);
@@ -39,30 +38,27 @@ function addSidebarSession(title, sessionId) {
         startNewChat();
       }
     }
-  })
+  }
 
   let pressTimer;
   let isLongPress = false;
+
+  item.addEventListener("contextmenu", function (e) {
+      e.preventDefault();
+      if (isLongPress) return;
+      handleDelete();
+  })
+
   item.addEventListener("touchstart", function (e) {
     isLongPress = false;
     pressTimer = setTimeout(() => {
       isLongPress = true;
-      const confirmDelete = confirm("Do you want to delete this session?");
-      if (confirmDelete) {
-        deleteSession(sessionId);
-        item.remove();
-        if (sessionId === currentSessionId) {
-          startNewChat();
-        }
-      }
+      handleDelete();
     }, 600);
   });
 
   item.addEventListener("touchend", function (e) {
     clearTimeout(pressTimer);
-    if (isLongPress) {
-      return;
-    }
   });
 
   item.addEventListener("touchmove", function (e) {
