@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ChatSession, ChatConversations
+from .models import ChatSession, ChatConversations, WebsiteSettings
 
 # Register your models here.
 class ChatSessionAdmin(admin.ModelAdmin):
@@ -11,3 +11,9 @@ class ChatSessionAdmin(admin.ModelAdmin):
 
 admin.site.register(ChatSession, ChatSessionAdmin)
 admin.site.register(ChatConversations)
+
+
+class WebsiteSettingsAdmin(admin.ModelAdmin):
+  list_display = ('website_name', 'maintainance_mode')
+
+admin.site.register(WebsiteSettings, WebsiteSettingsAdmin)

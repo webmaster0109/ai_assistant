@@ -31,3 +31,15 @@ class ChatConversations(models.Model):
 
   def __str__(self):
       return self.user_message
+
+
+class WebsiteSettings(models.Model):
+   website_name = models.CharField(max_length=100, default="Ollama AI")
+   website_logo = models.ImageField(upload_to='logos/', null=True, blank=True)
+   website_favicon = models.ImageField(upload_to='favicons/', null=True, blank=True)
+   website_description = models.TextField(default="A powerful AI chatbot platform built with Django and Ollama API.")
+   
+   maintainance_mode = models.BooleanField(default=False)
+
+   def __str__(self):
+      return self.website_name
