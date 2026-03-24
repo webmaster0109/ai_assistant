@@ -1,11 +1,10 @@
 from django.shortcuts import render
 # from .ollama import ollama_client, load_models, conversations
-from django.views import View
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse
 import markdown
 from .langchain import conversation_chain, generate_title
 from .models import ChatSession, ChatConversations
-from django.db import connection
+from .utils import cloud_usage_stats
 
 
 def api_ai_message(request, session_id):
@@ -33,7 +32,7 @@ def chat_post(request):
       title = generate_title(message)
       session = ChatSession.objects.create(model=model, title=title)
     
-    response = conversation_chain(model, message, session_id=session.id)
+    response, usage = conversation_chain(model, message, session_id=session.id)
     html_response = markdown.markdown(
       response,
       extensions=["fenced_code", "codehilite", "tables"]
@@ -43,6 +42,8 @@ def chat_post(request):
         session=session,
         user_message=message,
         ai_message=html_response,
+        input_tokens=usage.get('input_tokens', 0),
+        output_tokens=usage.get('output_tokens', 0)
       )
 
     print(f"[DEBUG] session_id: {session.id} | message: {message} | model: {model}")

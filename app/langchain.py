@@ -100,4 +100,13 @@ def conversation_chain(models, question, session_id="default"):
     )
 
     config = {"configurable": {"session_id": session_id}}
-    return runnable.invoke({"input": question}, config=config).content
+    lang_result = runnable.invoke({"input": question}, config=config)
+
+    usage = {}
+    if hasattr(lang_result, "response_metadata"):
+        meta = lang_result.response_metadata
+        usage = {
+            "input_tokens": meta.get("prompt_eval_count", 0),
+            "output_tokens": meta.get("eval_count", 0),
+        }
+    return lang_result.content, usage

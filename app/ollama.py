@@ -11,6 +11,8 @@ def ollama_client():
 
 def load_models(model):
   OLLAMA_MODELS = {
+    'gemini-3-flash-preview': 'gemini-3-flash-preview:cloud',
+    'gemma3': 'gemma3:27b-cloud',
     'glm-4.7': 'glm-4.7:cloud',
     'nemotron-3-super': 'nemotron-3-super',
     'glm-5': 'glm-5:cloud',

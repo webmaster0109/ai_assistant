@@ -10,7 +10,15 @@ class ChatSessionAdmin(admin.ModelAdmin):
 
 
 admin.site.register(ChatSession, ChatSessionAdmin)
-admin.site.register(ChatConversations)
+
+class ChatConversationsAdmin(admin.ModelAdmin):
+  list_display = ('user_message', 'input_tokens', 'output_tokens')
+  list_filter = ('session__model', 'created_at')
+  search_fields = ('user_message', 'ai_message')
+  ordering = ('-created_at',)
+  readonly_fields = ('input_tokens', 'output_tokens')
+
+admin.site.register(ChatConversations, ChatConversationsAdmin)
 
 
 class WebsiteSettingsAdmin(admin.ModelAdmin):

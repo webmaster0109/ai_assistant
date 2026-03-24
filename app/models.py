@@ -26,6 +26,8 @@ class ChatConversations(models.Model):
   )
   user_message = models.TextField()
   ai_message = models.TextField()
+  input_tokens = models.IntegerField(default=0)   # prompt_eval_count
+  output_tokens = models.IntegerField(default=0)  # eval_count
   created_at = models.DateTimeField(auto_now_add=True)
   updated_at = models.DateTimeField(auto_now=True)
 

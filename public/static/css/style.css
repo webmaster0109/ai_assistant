@@ -219,14 +219,14 @@ th {
 }
 
 .chat-box::-webkit-scrollbar {
-  width: 4px;
+  width: 6px;
 }
 .chat-box::-webkit-scrollbar-track {
   background: transparent;
 }
 .chat-box::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 4px;
+  border-radius: 2px;
 }
 
 .chat-container {
