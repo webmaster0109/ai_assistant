@@ -33,9 +33,9 @@ function addSidebarSession(title, sessionId) {
   let isLongPress = false;
 
   item.addEventListener("contextmenu", function (e) {
-      e.preventDefault();
-      handleDelete();
-  })
+    e.preventDefault();
+    handleDelete();
+  });
 
   item.addEventListener("touchstart", function (e) {
     isLongPress = false;
@@ -48,11 +48,61 @@ function addSidebarSession(title, sessionId) {
 
   item.addEventListener("touchmove", () => clearTimeout(pressTimer));
 
-  function handleDelete() {
+  function showConfirm(message) {
+    return new Promise((resolve) => {
+      const overlay = document.querySelector("#confirm-overlay");
+      const msgEl = overlay.querySelector(".confirm-message");
+      const yesBtn = document.querySelector("#confirm-delete-btn");
+      const noBtn = document.querySelector("#confirm-cancel-btn");
+
+      if (!overlay || !yesBtn || !noBtn) {
+        resolve(window.confirm(message));
+        return;
+      }
+
+      msgEl.textContent = message;
+
+      // ← inline style directly set karo, class pe depend mat karo
+      overlay.style.display = "flex";
+      overlay.style.opacity = "1";
+      overlay.style.pointerEvents = "all";
+
+      function cleanup(result) {
+        overlay.style.display = "none";
+        overlay.style.opacity = "0";
+        overlay.style.pointerEvents = "none";
+        yesBtn.removeEventListener("click", onYes);
+        noBtn.removeEventListener("click", onNo);
+        resolve(result);
+      }
+
+      function onYes() {
+        cleanup(true);
+      }
+      function onNo() {
+        cleanup(false);
+      }
+
+      yesBtn.addEventListener("click", onYes);
+      noBtn.addEventListener("click", onNo);
+
+      overlay.addEventListener("click", function onOverlay(e) {
+        if (e.target === overlay) {
+          overlay.removeEventListener("click", onOverlay);
+          cleanup(false);
+        }
+      });
+    });
+  }
+
+  async function handleDelete() {
     if (isLongPress) return;
     isLongPress = true;
 
-    const confirmDelete = confirm("Are you sure you want to delete this session?");
+    // const confirmDelete = confirm("Are you sure you want to delete this session?");
+    const confirmDelete = await showConfirm(
+      "Are you sure you want to delete this session? This action cannot be undone.",
+    );
     if (confirmDelete) {
       deleteSession(sessionId);
       item.remove();
@@ -61,7 +111,9 @@ function addSidebarSession(title, sessionId) {
         loadUsageStats();
       }
     }
-    setTimeout(() => {isLongPress = false;}, 500);
+    setTimeout(() => {
+      isLongPress = false;
+    }, 500);
   }
 
   item.addEventListener("click", () => {
@@ -87,7 +139,6 @@ async function loadAllSessions() {
 
     // Restore last active session
     if (currentSessionId) loadSession(currentSessionId);
-
   } catch (err) {
     console.error("[loadAllSessions] Failed:", err);
   }
@@ -107,15 +158,15 @@ function createChatContainer() {
 
 function appendMessages(userMessage, aiMessage, modelName) {
   const container = createChatContainer();
- 
+
   const userMsg = document.createElement("p");
   userMsg.classList.add("user-message");
   userMsg.innerHTML = `<strong>USER: </strong>${userMessage}`;
-  
+
   const aiMsg = document.createElement("div");
   aiMsg.classList.add("ai-message");
   aiMsg.innerHTML = `<strong>${modelName || "AI"}:</strong> ${aiMessage}`;
-  
+
   container.appendChild(userMsg);
   container.appendChild(aiMsg);
 
@@ -146,8 +197,8 @@ function startNewChat() {
   localStorage.removeItem("currentSessionModel");
   clearChatWindow();
   document
-  .querySelectorAll(".sidebar-item")
-  .forEach((el) => el.classList.remove("active"));
+    .querySelectorAll(".sidebar-item")
+    .forEach((el) => el.classList.remove("active"));
   closeSidebar();
   unlockModelDropdown();
 }
@@ -160,7 +211,8 @@ function lockModelDropdown(modelKey) {
   const modelSelect = document.querySelector("#model");
   modelSelect.value = modelKey;
   modelSelect.disabled = true;
-  modelSelect.title = "Model is locked for this session. Start a new chat to change.";
+  modelSelect.title =
+    "Model is locked for this session. Start a new chat to change.";
   // document.querySelector('#lock-badge').classList.add('visible');
 }
 
@@ -245,12 +297,13 @@ async function sendMessage(e) {
 }
 
 function updateUsageInstant(inputTokens, outputTokens) {
-    const currentTotal = parseInt(
-        document.querySelector('#usage-total').textContent.replace(/[KM]/g, '') 
+  const currentTotal =
+    parseInt(
+      document.querySelector("#usage-total").textContent.replace(/[KM]/g, ""),
     ) || 0;
 
-    // Just re-fetch — simplest approach
-    loadUsageStats();
+  // Just re-fetch — simplest approach
+  loadUsageStats();
 }
 
 // ── Load session history ──────────────────────────────────────

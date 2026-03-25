@@ -1,98 +1,201 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{website_name}}</title>
-  <link rel="shortcut icon" href="{{website_favicon}}" type="image/x-icon">
-  <meta name="description" content="{{website_description}}">
-  <meta name="author" content="Shrichand Thapa">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{website_name}}</title>
+    <link rel="shortcut icon" href="{{website_favicon}}" type="image/x-icon" />
+    <meta name="description" content="{{website_description}}" />
+    <meta name="author" content="Shrichand Thapa" />
 
-  <link rel="stylesheet" href="/media/css/style.css">
+    <link rel="stylesheet" href="/media/css/style.css" />
+  </head>
+  <body>
+    <div
+      class="sidebar-overlay"
+      id="sidebar-overlay"
+      onclick="closeSidebar()"
+    ></div>
 
-</head>
-<body>
-  <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div class="app-layout">
+      <!-- ── Sidebar ────────────────────────────── -->
+      <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">{{website_name}}</span>
+          <button id="close-sidebar-btn" onclick="closeSidebar()">✕</button>
+        </div>
+        <button id="new-chat-btn" onclick="startNewChat()">+ New Chat</button>
 
-  <div class="app-layout">
+        <div id="sidebar-sessions" class="sidebar-sessions"></div>
 
-    <!-- ── Sidebar ────────────────────────────── -->
-    <div class="sidebar" id="sidebar">
-      <div class="sidebar-header">
-        <span class="sidebar-title">{{website_name}}</span>
-        <button id="close-sidebar-btn" onclick="closeSidebar()">✕</button>
-      </div>
-      <button id="new-chat-btn" onclick="startNewChat()">+ New Chat</button>
-
-      <div id="sidebar-sessions" class="sidebar-sessions"></div>
-
-      <!-- ── Usage Panel — bottom ── -->
-      <div class="usage-panel" id="usage-panel">
+        <!-- ── Usage Panel — bottom ── -->
+        <div class="usage-panel" id="usage-panel">
           <div class="usage-title">⚡ Cloud Usage</div>
           <div class="usage-row">
-              <span class="usage-label">Input Tokens</span>
-              <span class="usage-value" id="usage-input">—</span>
+            <span class="usage-label">Input Tokens</span>
+            <span class="usage-value" id="usage-input">—</span>
           </div>
           <div class="usage-row">
-              <span class="usage-label">Output Tokens</span>
-              <span class="usage-value" id="usage-output">—</span>
+            <span class="usage-label">Output Tokens</span>
+            <span class="usage-value" id="usage-output">—</span>
           </div>
           <div class="usage-divider"></div>
           <div class="usage-row">
-              <span class="usage-label">Total Tokens</span>
-              <span class="usage-value usage-total" id="usage-total">—</span>
+            <span class="usage-label">Total Tokens</span>
+            <span class="usage-value usage-total" id="usage-total">—</span>
           </div>
-      </div>
-    </div>
-
-    <!-- ── Main area ──────────────────────────── -->
-    <div class="main-area">
-
-      <!-- Mobile topbar -->
-      <div class="topbar">
-        <button id="hamburger-btn" onclick="openSidebar()">☰</button>
-        <span class="topbar-title">{{website_name}}</span>
-      </div>
-
-      <div class="chat-box">
-        <div class="chat-message" id="chat-message"></div>
-      </div>
-
-      <form method="post" action="{% url 'chat' %}" id="chat-form">
-        {% csrf_token %}
-        <div class="input-row">
-          <select name="model" id="model">
-            <option value="glm-5">GLM 5</option>
-            <option value="glm-4.7">GLM 4.7</option>
-            <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
-            <option value="gpt-oss">GPT OSS</option>
-            <option value="gemma3">Gemma 3</option>
-            <option value="qwen3.5">Qwen 3.5</option>
-            <option value="deepseek-v3.2">DeepSeek V3.2</option>
-            <option value="deepseek-v3.1">DeepSeek V3.1</option>
-            <option value="nemotron-3-super">Nemotron 3 Super</option>
-            <option value="minimax-m2.7">Minimax M2.7</option>
-          </select>
-          <input type="text" name="message" id="message"
-            placeholder="Type your questions..." autocomplete="off" />
-          <button type="submit" id="send-btn">&uarr;</button>
         </div>
-      </form>
+      </div>
 
+      <!-- ── Main area ──────────────────────────── -->
+      <div class="main-area">
+        <!-- Mobile topbar -->
+        <div class="topbar">
+          <button id="hamburger-btn" onclick="openSidebar()">☰</button>
+          <span class="topbar-title">{{website_name}}</span>
+        </div>
+
+        <div class="chat-box">
+          <div class="chat-message" id="chat-message"></div>
+        </div>
+
+        <form method="post" action="{% url 'chat' %}" id="chat-form">
+          {% csrf_token %}
+          <div class="input-row">
+            <select name="model" id="model">
+              <option value="glm-5">GLM 5</option>
+              <option value="glm-4.7">GLM 4.7</option>
+              <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
+              <option value="gpt-oss">GPT OSS</option>
+              <option value="gemma3">Gemma 3</option>
+              <option value="qwen3.5">Qwen 3.5</option>
+              <option value="deepseek-v3.2">DeepSeek V3.2</option>
+              <option value="deepseek-v3.1">DeepSeek V3.1</option>
+              <option value="nemotron-3-super">Nemotron 3 Super</option>
+              <option value="minimax-m2.7">Minimax M2.7</option>
+            </select>
+            <input
+              type="text"
+              name="message"
+              id="message"
+              placeholder="Type your questions..."
+              autocomplete="off"
+            />
+            <button type="submit" id="send-btn">&uarr;</button>
+          </div>
+        </form>
+      </div>
     </div>
-  </div>
 
     <!-- ── Popup ──────────────────────────────────── -->
-    <div class="popup-dialog" id="popup-dialog" style="display:none;">
+    <div class="popup-dialog" id="popup-dialog" style="display: none">
       <div class="popup-inner">
         <button class="cancel-btn" id="cancel-btn">⨂</button>
         <div class="popup-content" id="popup-content"></div>
       </div>
     </div>
 
-  <script src="/media/js/usage.js"></script>
-  <script src="/media/js/delete-sessions.js"></script>
-  <script src="/media/js/ollama.js"></script>
+    <div
+      class="confirm-overlay"
+      id="confirm-overlay"
+      style="
+        display: none;
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, 0.75);
+        align-items: center;
+        justify-content: center;
+        z-index: 99999;
+        padding: 20px;
+        backdrop-filter: blur(4px);
+      "
+    >
+      <div
+        class="confirm-box"
+        style="
+          background: #1c1c20;
+          border: 1px solid #2a2a30;
+          border-radius: 16px;
+          padding: 28px 24px;
+          width: 100%;
+          max-width: 320px;
+          text-align: center;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+        "
+      >
+        <div class="confirm-icon" style="font-size: 2.4rem; line-height: 1">
+          🗑️
+        </div>
+        <h3
+          class="confirm-title"
+          style="
+            font-family: &quot;Syne&quot;, sans-serif;
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #e8e8f0;
+            margin: 0;
+          "
+        >
+          Delete Session?
+        </h3>
+        <p
+          class="confirm-message"
+          style="
+            font-size: 0.85rem;
+            color: #6b6b7a;
+            line-height: 1.6;
+            margin: 0;
+          "
+        ></p>
+        <div
+          class="confirm-actions"
+          style="display: flex; gap: 10px; margin-top: 4px"
+        >
+          <button
+            id="confirm-cancel-btn"
+            style="
+              flex: 1;
+              padding: 11px;
+              border-radius: 10px;
+              border: 1px solid #2a2a30;
+              background: #1c1c20;
+              color: #e8e8f0;
+              font-family: &quot;Syne&quot;, sans-serif;
+              font-size: 0.88rem;
+              font-weight: 600;
+              cursor: pointer;
+            "
+          >
+            Cancel
+          </button>
+          <button
+            id="confirm-delete-btn"
+            style="
+              flex: 1;
+              padding: 11px;
+              border-radius: 10px;
+              border: none;
+              background: #dc2626;
+              color: #fff;
+              font-family: &quot;Syne&quot;, sans-serif;
+              font-size: 0.88rem;
+              font-weight: 600;
+              cursor: pointer;
+            "
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
 
-</body>
+    <script src="/media/js/usage.js"></script>
+    <script src="/media/js/delete-sessions.js"></script>
+    <script src="/media/js/ollama.js"></script>
+  </body>
 </html>
