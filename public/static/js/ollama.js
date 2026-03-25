@@ -34,35 +34,34 @@ function addSidebarSession(title, sessionId) {
 
   item.addEventListener("contextmenu", function (e) {
       e.preventDefault();
-      if (isLongPress) return;
       handleDelete();
   })
 
   item.addEventListener("touchstart", function (e) {
     isLongPress = false;
     pressTimer = setTimeout(() => {
-      isLongPress = true;
       handleDelete();
     }, 600);
   });
 
-  item.addEventListener("touchend", function (e) {
-    clearTimeout(pressTimer);
-  });
+  item.addEventListener("touchend", () => clearTimeout(pressTimer));
 
-  item.addEventListener("touchmove", function (e) {
-    clearTimeout(pressTimer);
-  });
+  item.addEventListener("touchmove", () => clearTimeout(pressTimer));
 
   function handleDelete() {
+    if (isLongPress) return;
+    isLongPress = true;
+
     const confirmDelete = confirm("Are you sure you want to delete this session?");
     if (confirmDelete) {
       deleteSession(sessionId);
       item.remove();
       if (sessionId === currentSessionId) {
         startNewChat();
+        loadUsageStats();
       }
     }
+    setTimeout(() => {isLongPress = false;}, 500);
   }
 
   item.addEventListener("click", () => {
