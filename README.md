@@ -1,6 +1,7 @@
 # ollama_ai
 
 A Django-based web chat application that connects to Ollama-compatible models, stores multi-session conversation history, and provides a sidebar-based chat experience.
+<img width="1366" height="654" alt="image" src="https://github.com/user-attachments/assets/b2aeb086-1bad-4a09-9838-2d1b16882f79" />
 
 ## Features
 
