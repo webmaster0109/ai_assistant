@@ -24,6 +24,15 @@ def load_models(model):
   }
   return OLLAMA_MODELS[model]
 
+VISION_MODELS = {
+    'gemini-3-flash-preview',
+    'gemma3',
+    'glm-5',
+}
+
+def is_vision_model(model: str)-> bool:
+  return model in VISION_MODELS
+
 def conversations(model, message):
   client = ollama_client()
   response = client.chat(model=model, messages=[{'role': 'user', 'content': message}])

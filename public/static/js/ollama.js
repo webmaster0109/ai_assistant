@@ -4,6 +4,10 @@ const form = document.querySelector("#chat-form");
 let currentSessionId = localStorage.getItem("currentSessionId") || null;
 let currentSessionModel = localStorage.getItem("currentSessionModel") || null;
 
+const popupDialog = document.querySelector("#popup-dialog");
+const popupContent = document.querySelector("#popup-content");
+const cancelBtn = document.querySelector("#cancel-btn");
+
 function openSidebar() {
   document.querySelector("#sidebar").classList.add("open");
   document.querySelector("#sidebar-overlay").classList.add("open");
@@ -100,9 +104,7 @@ function addSidebarSession(title, sessionId) {
     isLongPress = true;
 
     // const confirmDelete = confirm("Are you sure you want to delete this session?");
-    const confirmDelete = await showConfirm(
-      "Are you sure you want to delete this session? This action cannot be undone.",
-    );
+    const confirmDelete = await showConfirm("Are you sure you want to delete this chat session? This action cannot be undone.");
     if (confirmDelete) {
       deleteSession(sessionId);
       item.remove();
@@ -229,13 +231,10 @@ async function sendMessage(e) {
 
   const messageInput = document.querySelector("#message");
   const message = messageInput.value.trim();
-  const popupDialog = document.querySelector("#popup-dialog");
-  const popupContent = document.querySelector("#popup-content");
-  const cancelBtn = document.querySelector("#cancel-btn");
 
   if (!message) {
     popupDialog.style.display = "flex";
-    popupContent.innerHTML = "<p>Please enter a message first.</p>";
+    popupContent.innerHTML = "<p>Please ask your question first.</p>";
     cancelBtn.onclick = () => (popupDialog.style.display = "none");
     return;
   }
@@ -277,6 +276,7 @@ async function sendMessage(e) {
       }
       lockModelDropdown(currentSessionModel);
       appendMessages(result.user_message, result.ai_message, result.model);
+
       loadUsageStats();
 
       if (result.input_tokens || result.output_tokens) {

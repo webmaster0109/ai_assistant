@@ -5,7 +5,7 @@ import markdown
 from .langchain import conversation_chain, generate_title
 from .models import ChatSession, ChatConversations
 from .utils import cloud_usage_stats, usage_stats
-import json 
+import json
 
 
 def api_ai_message(request, session_id):
@@ -33,7 +33,9 @@ def chat_post(request):
       title = generate_title(message)
       session = ChatSession.objects.create(model=model, title=title)
     
+    
     response, usage = conversation_chain(model, message, session_id=session.id)
+
     html_response = markdown.markdown(
       response,
       extensions=["fenced_code", "codehilite", "tables"]

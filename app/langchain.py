@@ -73,6 +73,7 @@ def conversation_chain(models, question, session_id="default"):
     if SYSTEM_PROMPTS == "":
       system_prompt = "You are a helpful and precise assistant for answering user queries."
     system_prompt = SYSTEM_PROMPTS
+
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=system_prompt),
         MessagesPlaceholder(variable_name="history"),
@@ -90,13 +91,13 @@ def conversation_chain(models, question, session_id="default"):
         # total context window (history + response)
         num_ctx=8192,
     )
-
+      
     runnable = RunnableWithMessageHistory(
-        prompt | llm,
-        # get_trimmed_session_history,
-        load_history_from_db,
-        input_messages_key="input",
-        history_messages_key="history",
+       prompt | llm,
+       # get_trimmed_session_history,
+       load_history_from_db,
+       input_messages_key="input",
+       history_messages_key="history",
     )
 
     config = {"configurable": {"session_id": session_id}}
