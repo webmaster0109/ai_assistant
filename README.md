@@ -25,6 +25,7 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 - Maintenance mode middleware support
 - Token usage tracking (`input_tokens`, `output_tokens`) per conversation
 - Cloud usage panel (input/output/total tokens)
+- Browser voice input support (Web Speech API)
 
 ## Tech Stack
 
@@ -58,7 +59,7 @@ ollama_ai/
 │   ├── js/usage.js          # Usage panel fetch logic
 │   └── favicons/            # Uploaded favicon/media files
 ├── templates/
-│   └── chat.html            # Chat interface
+│   └── chat.html            # Main chat interface
 ├── requirements.txt
 ├── manage.py
 └── README.md
@@ -82,6 +83,7 @@ ollama_ai/
 - Network access to an Ollama-compatible host
 - Valid API key for your Ollama host
 - `pip` available in your Python environment
+- Modern browser (Chrome/Edge recommended for SpeechRecognition support)
 
 ## Required Python Packages
 
@@ -94,6 +96,7 @@ pip install -r requirements.txt
 Main runtime dependencies used directly by this project:
 
 - `Django`
+- `django-sslserver` (`sslserver` app in `INSTALLED_APPS`)
 - `langchain`, `langchain-community`, `langchain-core`
 - `ollama`
 - `python-dotenv`
@@ -118,6 +121,7 @@ python3 -m venv venv
 source venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+pip install django-sslserver
 ```
 
 If you open a new terminal, activate the environment again before running Django commands:
@@ -141,6 +145,12 @@ Used in:
 - `app/ollama.py`
 - `app/langchain.py`
 - `ollama_ai/settings.py`
+
+## Browser Requirements
+
+- Voice input uses the browser Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`).
+- On `localhost`, voice usually works directly.
+- On remote domains, microphone access typically requires HTTPS.
 
 ## Database Setup (PostgreSQL)
 
@@ -178,6 +188,12 @@ Open:
 
 - App: `http://127.0.0.1:8000/`
 - Admin: `http://127.0.0.1:8000/admin/`
+
+For HTTPS local testing (useful for browser mic behavior on non-localhost environments):
+
+```bash
+python3 manage.py runsslserver
+```
 
 ## Verify Setup
 
@@ -313,6 +329,9 @@ python3 manage.py test
 - `ModuleNotFoundError: No module named 'dotenv'`:
   - Install project requirements: `pip install -r requirements.txt`
   - Ensure virtual environment is activated before running Django commands.
+- `ModuleNotFoundError: No module named 'sslserver'`:
+  - Install `django-sslserver` in your active environment.
+  - Or remove `'sslserver'` from `INSTALLED_APPS` if you do not need HTTPS dev server.
 - `ModuleNotFoundError` (e.g., `markdown`):
   - Ensure virtual env is active and run `pip install -r requirements.txt`.
   - If it still fails, run `pip install Markdown` and re-run `python3 manage.py check`.

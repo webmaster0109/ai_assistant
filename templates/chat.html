@@ -7,8 +7,42 @@
     <link rel="shortcut icon" href="{{website_favicon}}" type="image/x-icon" />
     <meta name="description" content="{{website_description}}" />
     <meta name="author" content="Shrichand Thapa" />
-
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css">
     <link rel="stylesheet" href="/media/css/style.css" />
+    <style>
+      #mic-btn {
+        padding: 10px 12px;
+        background: var(--surface2);
+        color: #fff;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        cursor: pointer;
+        font-size: 1rem;
+        transition:
+          background 0.2s,
+          transform 0.1s;
+        flex-shrink: 0;
+      }
+
+      #mic-btn:hover {
+        background: var(--border);
+      }
+      #mic-btn.recording {
+        background: rgba(220, 38, 38, 0.2);
+        border-color: #dc2626;
+        animation: pulse 1.5s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.08);
+        }
+      }
+    </style>
   </head>
   <body>
     <div
@@ -74,25 +108,14 @@
               <option value="nemotron-3-super">Nemotron 3 Super</option>
               <option value="minimax-m2.7">Minimax M2.7</option>
             </select>
-
-            <!-- image upload -->
-             <label for="image-input" class="image-upload-btn" id="image-upload-label" title="Image attach here">
-              📎
-              <input type="file" id="image-input" name="image" accept="image/*" style="display: none" />
-
-              <!-- image preview -->
-               <div class="image-preview-wrap" id="image-preview-wrap" style="display: none;">
-                <img src="" alt="Image Preview" id="image-preview">
-                <button type="button" id="remove-image-btn">x</button>
-               </div>
-             </label>
             <input
-              type="text"
-              name="message"
-              id="message"
-              placeholder="Type your questions..."
-              autocomplete="off"
+            type="text"
+            name="message"
+            id="message"
+            placeholder="type or speak..."
+            autocomplete="off"
             />
+            <button type="button" id="mic-btn" title="Voice Input"><i class="bi bi-mic"></i></button>
             <button type="submit" id="send-btn">&uarr;</button>
           </div>
         </form>
@@ -208,5 +231,87 @@
     <script src="/media/js/usage.js"></script>
     <script src="/media/js/delete-sessions.js"></script>
     <script src="/media/js/ollama.js"></script>
+
+    <script>
+      const SpeechRecognition =
+        window.SpeechRecognition || window.webkitSpeechRecognition;
+
+      if (!SpeechRecognition) {
+        console.warn("Your browser does not support Speech Recognition.");
+      } else {
+        const recognition = new SpeechRecognition();
+        recognition.lang = "en-IN";
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        // 1. Target the button
+        let micBtn = document.getElementById("mic-btn");
+
+        // 2. STRIP EXISTING LISTENERS: Clone the button and replace it.
+        const newMicBtn = micBtn.cloneNode(true);
+        micBtn.parentNode.replaceChild(newMicBtn, micBtn);
+        micBtn = newMicBtn;
+
+        micBtn.dataset.listening = "false";
+
+        micBtn.addEventListener("click", () => {
+          micBtn.disabled = true;
+          setTimeout(() => (micBtn.disabled = false), 500);
+
+          if (micBtn.dataset.listening === "true") {
+            try {
+              recognition.stop();
+            } catch (e) {}
+          } else {
+            try {
+              recognition.start();
+            } catch (err) {
+              // 4. GRACEFUL FALLBACK: If the browser complains it's already running, just sync our UI to match the browser's reality.
+              if (err.name === "InvalidStateError") {
+                micBtn.dataset.listening = "true";
+                micBtn.innerHTML = "<i class='bi bi-mic-fill'></i>";
+                micBtn.style.color = "#dc2626";
+                console.warn(
+                  "Ignored double-start. Audio engine is already running.",
+                );
+              } else {
+                console.error("Start error:", err);
+              }
+            }
+          }
+        });
+
+        recognition.onstart = () => {
+          micBtn.dataset.listening = "true";
+          micBtn.innerHTML = "<i class='bi bi-mic-fill'></i>";
+          micBtn.style.color = "#dc2626";
+        };
+
+        recognition.onresult = (e) => {
+          const transcript = Array.from(e.results)
+            .map((r) => r[0].transcript)
+            .join("");
+          // console.log("Recognized Text:", transcript);
+          document.querySelector("#message").value = transcript;
+        };
+
+        recognition.onend = () => {
+          micBtn.dataset.listening = "false";
+          micBtn.innerHTML = "<i class='bi bi-mic'></i>";
+          micBtn.style.color = "";
+        };
+
+        recognition.onerror = (e) => {
+          micBtn.dataset.listening = "false";
+          micBtn.innerHTML = "<i class='bi bi-mic'></i>";
+          micBtn.style.color = "";
+
+          // We ignore "no-speech" errors from creating a popup, as it just means the user was quiet
+          if (e.error !== "no-speech") {
+            console.error("Voice error:", e.error);
+          }
+        };
+      }
+    </script>
   </body>
 </html>

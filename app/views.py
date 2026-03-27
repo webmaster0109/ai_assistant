@@ -1,19 +1,20 @@
 from django.shortcuts import render
-# from .ollama import ollama_client, load_models, conversations
 from django.http import JsonResponse
 import markdown
 from .langchain import conversation_chain, generate_title
 from .models import ChatSession, ChatConversations
-from .utils import cloud_usage_stats, usage_stats
-import json
+from .utils import cloud_usage_stats
 
 
 def api_ai_message(request, session_id):
   messages = ChatConversations.objects.filter(session_id=session_id).values('session__model', 'ai_message', 'user_message')
-  # print(messages.query)
-  # for msg in messages: pass
-  # print(len(connection.queries))
-  return JsonResponse({"model": list(messages)[0]['session__model'], "user_message": list(messages)[0]['user_message'], "ai_message": list(messages)[0]['ai_message']
+  messages_list = list(messages)
+  if not messages_list:
+    return JsonResponse({"error": "No messages found"}, status=404)
+  return JsonResponse({
+    "model": messages_list[0]['session__model'],
+    "user_message": messages_list[0]['user_message'],
+    "ai_message": messages_list[0]['ai_message']
   }, safe=False, status=200)
 
 def chat_convo(request):
@@ -47,22 +48,20 @@ def chat_post(request):
         ai_message=html_response,
         input_tokens=usage.get('input_tokens', 0),
         output_tokens=usage.get('output_tokens', 0)
-      )
-    
-    usage = usage_stats()
-    print(f"[DEBUG] usage: {usage}")
+    )
+
     print(f"[DEBUG] session_id: {session.id} | message: {message} | model: {model}")
     return JsonResponse({
-      "user_message": message, 
-      "ai_message": html_response, 
+      "user_message": message,
+      "ai_message": html_response,
       "session_id": session.id,
       "title": session.title,
       "model": session.model.upper(),
       "model_key": session.model,
       "input_tokens": usage.get('input_tokens', 0),
       "output_tokens": usage.get('output_tokens', 0),
-      "total_tokens": (usage.get('input_tokens', 0) + usage.get('output_tokens', 0)),
-      }, status=200)
+      "total_tokens": usage.get('input_tokens', 0) + usage.get('output_tokens', 0),
+    }, status=200)
 
 
 def chat_history_conversations(request, session_id):

@@ -4,14 +4,13 @@ from django.db.models import Sum, Count
 from django.http import JsonResponse
 from django.conf import settings as django_settings
 
-
-
 SYSTEM_PROMPTS = prompts.system_prompt
+
 
 def get_website_settings(request):
   settings = WebsiteSettings.objects.values(
-    'website_name', 
-    'website_description', 
+    'website_name',
+    'website_description',
     'website_favicon'
   ).first()
   return context_processors(request, settings)

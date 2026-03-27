@@ -26,8 +26,6 @@ class ChatConversations(models.Model):
   )
   user_message = models.TextField()
   ai_message = models.TextField()
-  # image field for future use
-  image = models.ImageField(upload_to='vision/images/', null=True, blank=True)
   input_tokens = models.IntegerField(default=0)   # prompt_eval_count
   output_tokens = models.IntegerField(default=0)  # eval_count
   created_at = models.DateTimeField(auto_now_add=True)
