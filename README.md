@@ -2,9 +2,9 @@
 
 A Django-based web chat application that connects to Ollama-compatible models, stores multi-session conversation history, and provides a sidebar-based chat experience.
 
-<img width="1366" height="654" alt="image" src="https://github.com/user-attachments/assets/b2aeb086-1bad-4a09-9838-2d1b16882f79" />
+<img width="1364" height="649" alt="image" src="https://github.com/user-attachments/assets/9750bef1-2b4a-4552-8b10-60a8d944b395" />
 
-<img width="1366" height="654" alt="image" src="https://github.com/user-attachments/assets/9c454014-8e9b-4c1a-94ca-553d05734bd9" />
+<img width="1364" height="649" alt="image" src="https://github.com/user-attachments/assets/5a7ecd0e-d068-48fd-8da3-875975e8a92d" />
 
 
 ## Architecture Diagram
