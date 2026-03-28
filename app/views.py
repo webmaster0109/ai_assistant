@@ -4,7 +4,7 @@ import markdown
 from .langchain import conversation_chain, generate_title
 from .models import ChatSession, ChatConversations
 from .utils import cloud_usage_stats
-from .voice import voice_to_text
+# from .voice import voice_to_text
 
 
 def api_ai_message(request, session_id):
