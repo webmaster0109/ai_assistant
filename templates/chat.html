@@ -30,16 +30,19 @@
       #mic-btn.recording {
         background: rgba(220, 38, 38, 0.2);
         border-color: #dc2626;
-        animation: pulse 1.5s infinite;
+        color: #dc2626;
+        animation: pulse 1.5s ease-in-out infinite;
       }
 
       @keyframes pulse {
         0%,
         100% {
           transform: scale(1);
+          box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4);
         }
         50% {
           transform: scale(1.08);
+          box-shadow: 0 0 0 0 rgba(220, 38, 38, 0);
         }
       }
     </style>
@@ -93,7 +96,7 @@
           <div class="chat-message" id="chat-message"></div>
         </div>
 
-        <form method="post" action="{% url 'chat' %}" id="chat-form">
+        <form method="post" id="chat-form">
           {% csrf_token %}
           <div class="input-row">
             <select name="model" id="model">
@@ -271,6 +274,7 @@
                 micBtn.dataset.listening = "true";
                 micBtn.innerHTML = "<i class='bi bi-mic-fill'></i>";
                 micBtn.style.color = "#dc2626";
+                micBtn.classList.add('recording');
                 console.warn(
                   "Ignored double-start. Audio engine is already running.",
                 );
@@ -285,6 +289,7 @@
           micBtn.dataset.listening = "true";
           micBtn.innerHTML = "<i class='bi bi-mic-fill'></i>";
           micBtn.style.color = "#dc2626";
+          micBtn.classList.add('recording');
         };
 
         recognition.onresult = (e) => {
@@ -299,12 +304,14 @@
           micBtn.dataset.listening = "false";
           micBtn.innerHTML = "<i class='bi bi-mic'></i>";
           micBtn.style.color = "";
+          micBtn.classList.remove('recording');
         };
 
         recognition.onerror = (e) => {
           micBtn.dataset.listening = "false";
           micBtn.innerHTML = "<i class='bi bi-mic'></i>";
           micBtn.style.color = "";
+          micBtn.classList.remove('recording');
 
           // We ignore "no-speech" errors from creating a popup, as it just means the user was quiet
           if (e.error !== "no-speech") {
