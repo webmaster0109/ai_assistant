@@ -7,7 +7,10 @@
     <link rel="shortcut icon" href="{{website_favicon}}" type="image/x-icon" />
     <meta name="description" content="{{website_description}}" />
     <meta name="author" content="Shrichand Thapa" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css">
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
+    />
     <link rel="stylesheet" href="/media/css/style.css" />
     <style>
       #mic-btn {
@@ -112,13 +115,15 @@
               <option value="minimax-m2.7">Minimax M2.7</option>
             </select>
             <input
-            type="text"
-            name="message"
-            id="message"
-            placeholder="type or speak..."
-            autocomplete="off"
+              type="text"
+              name="message"
+              id="message"
+              placeholder="type or speak..."
+              autocomplete="off"
             />
-            <button type="button" id="mic-btn" title="Voice Input"><i class="bi bi-mic"></i></button>
+            <button type="button" id="mic-btn" title="Voice Input">
+              <i class="bi bi-mic"></i>
+            </button>
             <button type="submit" id="send-btn">&uarr;</button>
           </div>
         </form>
@@ -235,7 +240,7 @@
     <script src="/media/js/delete-sessions.js"></script>
     <script src="/media/js/ollama.js"></script>
 
-    <script>
+    <!-- <script>
       const SpeechRecognition =
         window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -319,6 +324,151 @@
           }
         };
       }
+    </script> -->
+
+    <script>
+      let mediaRecorder = null;
+      let audioChunks = [];
+      let isRecording = false;
+      let recordingStream = null;
+      const micBtn = document.querySelector('#mic-btn');
+
+      // ── Supported mimeType detect karo ───────────
+      function getSupportedMimeType() {
+        const types = [
+          "audio/webm;codecs=opus",
+          "audio/webm",
+          "audio/ogg;codecs=opus",
+          "audio/mp4",
+          "", // browser default
+        ];
+        for (const type of types) {
+          if (!type || MediaRecorder.isTypeSupported(type)) return type;
+        }
+        return "";
+      }
+
+      async function startRecording() {
+        try {
+          recordingStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          const mimeType = getSupportedMimeType();
+
+          mediaRecorder = mimeType
+            ? new MediaRecorder(recordingStream, { mimeType })
+            : new MediaRecorder(recordingStream);
+
+          audioChunks = [];
+
+          mediaRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+              audioChunks.push(e.data);
+            }
+          };
+
+          mediaRecorder.onstop = async () => {
+            // Stream band karo
+            recordingStream.getTracks().forEach((t) => t.stop());
+
+            micBtn.classList.remove("recording");
+            micBtn.innerHTML = "<i class='bi bi-hourglass-split'></i>";
+            micBtn.disabled = true;
+
+            if (audioChunks.length === 0) {
+              console.warn("No audio chunks recorded");
+              resetMicBtn();
+              return;
+            }
+
+            const audioBlob = new Blob(audioChunks, {
+              type: mediaRecorder.mimeType || "audio/webm",
+            });
+
+            console.log(
+              "Audio blob size:",
+              audioBlob.size,
+              "type:",
+              audioBlob.type,
+            );
+
+            await sendToWhisper(audioBlob);
+            resetMicBtn();
+          };
+
+          mediaRecorder.onerror = (e) => {
+            console.error("MediaRecorder error:", e);
+            resetMicBtn();
+          };
+
+          // ← timeslice=100 — har 100ms pe data milega
+          mediaRecorder.start(100);
+          isRecording = true;
+
+          micBtn.innerHTML = "<i class='bi bi-stop-fill'></i>";
+          micBtn.classList.add("recording");
+          console.log("Recording started, mimeType:", mediaRecorder.mimeType);
+        } catch (err) {
+          console.error("Mic access error:", err);
+          alert("Microphone access denied! Please allow mic permission.");
+          resetMicBtn();
+        }
+      }
+
+      function stopRecording() {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+          mediaRecorder.stop();
+          isRecording = false;
+          micBtn.innerHTML = "<i class='bi bi-hourglass-split'></i>";
+        }
+      }
+
+      function resetMicBtn() {
+        isRecording = false;
+        micBtn.disabled = false;
+        micBtn.innerHTML = "<i class='bi bi-mic'></i>";
+        micBtn.classList.remove("recording");
+      }
+
+      async function sendToWhisper(audioBlob) {
+        const formData = new FormData();
+        formData.append("audio", audioBlob, "voice.webm");
+        formData.append(
+          "csrfmiddlewaretoken",
+          document.querySelector("[name=csrfmiddlewaretoken]").value,
+        );
+
+        try {
+          const res = await fetch("/chat/voice/", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const err = await res.json();
+            console.error("Whisper API error:", err);
+            return;
+          }
+
+          const data = await res.json();
+          console.log("Whisper result:", data);
+
+          if (data.text) {
+            document.querySelector("#message").value = data.text;
+          }
+        } catch (err) {
+          console.error("Whisper fetch error:", err);
+        }
+      }
+
+      // ── Mic button click handler ──────────────────
+      micBtn.addEventListener("click", () => {
+        if (isRecording) {
+          stopRecording();
+        } else {
+          startRecording();
+        }
+      });
     </script>
   </body>
 </html>

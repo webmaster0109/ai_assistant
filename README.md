@@ -25,7 +25,7 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 - Maintenance mode middleware support
 - Token usage tracking (`input_tokens`, `output_tokens`) per conversation
 - Cloud usage panel (input/output/total tokens)
-- Browser voice input support (Web Speech API)
+- Voice-to-text backend endpoint using Whisper (`faster-whisper`)
 
 ## Tech Stack
 
@@ -48,6 +48,7 @@ ollama_ai/
 │   ├── prompts.py           # System prompt text
 │   ├── urls.py              # App routes
 │   ├── views.py             # API and page handlers
+│   ├── voice.py             # Voice-to-text endpoint (Whisper)
 │   └── migrations/          # Django migrations
 ├── ollama_ai/
 │   ├── settings.py          # Django settings
@@ -102,6 +103,7 @@ Main runtime dependencies used directly by this project:
 - `Markdown`
 - `psycopg2-binary`
 - `pillow`
+- `faster-whisper`
 
 Also present in `requirements.txt`:
 
@@ -146,9 +148,8 @@ Used in:
 
 ## Browser Requirements
 
-- Voice input uses the browser Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`).
-- On `localhost`, voice usually works directly.
-- On remote domains, microphone access typically requires HTTPS.
+- Voice UI controls are present in the frontend.
+- Server-side transcription is handled by the `/chat/voice/` endpoint with Whisper.
 
 ## Database Setup (PostgreSQL)
 
@@ -218,6 +219,10 @@ python3 manage.py test
     - `output_tokens`
     - `total_tokens`
 
+- `POST /chat/voice/`
+  - Accepts uploaded audio file (`audio`) and returns transcribed text:
+    - `text`
+
 - `GET /chat/history/<session_id>/`
   - Fetch full conversation history for one session.
 
@@ -286,6 +291,7 @@ Defined in `app/ollama.py`:
 - `app/prompts.py`: system prompt/persona behavior
 - `app/ollama.py`: model mapping
 - `app/langchain.py`: memory length (`MAX_MESSAGES`), chain behavior
+- `app/voice.py`: Whisper-based speech-to-text handling
 - `app/middlewares/constructions.py`: maintenance mode behavior
 - `app/utils.py`: website settings context processor
 - `public/static/js/ollama.js`: chat frontend interactions and session model lock
