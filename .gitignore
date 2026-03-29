@@ -5,3 +5,5 @@ __pycache__/
 .gemini/
 gha-creds-*.json
 prompts.txt
+.github/
+.claude/
