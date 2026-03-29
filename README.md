@@ -25,15 +25,16 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 - Maintenance mode middleware support
 - Token usage tracking (`input_tokens`, `output_tokens`) per conversation
 - Cloud usage panel (input/output/total tokens)
-- Voice-to-text backend endpoint using Whisper (`faster-whisper`)
+- Whisper voice transcription module (`faster-whisper`) available for API integration
 
 ## Tech Stack
 
 - Python 3.13+
 - Django 6
-- LangChain (`langchain`, `langchain-community`, `langchain-core`)
+- LangChain (`langchain`, `langchain-core`, `langchain-ollama`)
 - Ollama Python client (`ollama`)
 - PostgreSQL (via `DATABASE_URL`)
+- Redis cache (`django-redis`)
 - Frontend: server-rendered HTML/CSS/JS (no separate SPA build)
 
 ## Project Structure
@@ -75,7 +76,7 @@ ollama_ai/
    - Server calls `conversation_chain()` in `app/langchain.py`.
    - AI response is saved into `ChatConversations`.
 4. Session history is loaded from `/chat/history/<session_id>/`.
-5. LangChain memory is loaded from DB and trimmed to `MAX_MESSAGES` per session.
+5. LangChain history is cached in Redis and refreshed from DB on cache miss.
 
 ## Prerequisites
 
@@ -97,17 +98,17 @@ pip install -r requirements.txt
 Main runtime dependencies used directly by this project:
 
 - `Django`
-- `langchain`, `langchain-community`, `langchain-core`
+- `langchain`, `langchain-core`, `langchain-ollama`
 - `ollama`
 - `python-dotenv`
 - `Markdown`
 - `psycopg2-binary`
 - `pillow`
-- `faster-whisper`
+- `redis`, `django-redis`
 
 Also present in `requirements.txt`:
 
-- `langgraph*`, `langsmith`, `numpy`, `requests`, `gunicorn`
+- `langgraph*`, `langchain-community`, `langsmith`, `numpy`, `requests`, `gunicorn`, `faster-whisper`
 
 ## Installation
 
@@ -138,6 +139,7 @@ Create a `.env` file in the project root:
 OLLAMA_API_KEY=your_api_key_here
 OLLAMA_HOST=https://your-ollama-host
 DATABASE_URL=postgresql://username:password@host:5432/database_name
+REDIS_URL=redis://127.0.0.1:6379/1
 ```
 
 Used in:
@@ -146,10 +148,13 @@ Used in:
 - `app/langchain.py`
 - `ollama_ai/settings.py`
 
+Current default cache location in settings is `redis://127.0.0.1:6379/1`.
+
 ## Browser Requirements
 
 - Voice UI controls are present in the frontend.
-- Server-side transcription is handled by the `/chat/voice/` endpoint with Whisper.
+- Server-side transcription module exists in `app/voice.py`.
+- Voice endpoint route is currently disabled in `app/urls.py` (`/chat/voice/` commented out).
 
 ## Database Setup (PostgreSQL)
 
@@ -219,10 +224,6 @@ python3 manage.py test
     - `output_tokens`
     - `total_tokens`
 
-- `POST /chat/voice/`
-  - Accepts uploaded audio file (`audio`) and returns transcribed text:
-    - `text`
-
 - `GET /chat/history/<session_id>/`
   - Fetch full conversation history for one session.
 
@@ -284,6 +285,7 @@ Defined in `app/ollama.py`:
 - `website_logo`
 - `website_favicon`
 - `website_description`
+- `system_prompt`
 - `maintainance_mode`
 
 ## Key Files You May Customize

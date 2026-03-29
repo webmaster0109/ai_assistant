@@ -31,6 +31,11 @@ class ChatConversations(models.Model):
   created_at = models.DateTimeField(auto_now_add=True)
   updated_at = models.DateTimeField(auto_now=True)
 
+  class Meta:
+     indexes = [
+        models.Index(fields=['session', '-created_at']),
+     ]
+
   def __str__(self):
       return self.user_message
 
@@ -40,8 +45,22 @@ class WebsiteSettings(models.Model):
    website_logo = models.ImageField(upload_to='logos/', null=True, blank=True)
    website_favicon = models.ImageField(upload_to='favicons/', null=True, blank=True)
    website_description = models.TextField(default="A powerful AI chatbot platform built with Django and Ollama API.")
+
+   system_prompt = models.TextField(
+      blank=True,
+      default="You are a helpful and precise assistant for answering user queries. Always use all available information to provide the best answer. If you don't know the answer, say you don't know. Be concise and clear in your responses."
+   )
    
    maintainance_mode = models.BooleanField(default=False)
 
    def __str__(self):
       return self.website_name
+   
+   class Meta:
+      verbose_name = "Website Settings"
+   
+   def save(self, *args, **kwargs):
+      super().save(*args, **kwargs)
+      # Update the global SYSTEM_PROMPTS variable whenever settings are saved
+      from django.core.cache import cache
+      cache.delete("system_prompt")  # Clear cached settings

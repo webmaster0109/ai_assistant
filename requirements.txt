@@ -17,3 +17,6 @@ python-dotenv
 requests
 gunicorn
 psycopg2-binary
+redis
+django-redis
+langchain-ollama

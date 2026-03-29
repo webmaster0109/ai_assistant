@@ -4,6 +4,7 @@ import markdown
 from .langchain import conversation_chain, generate_title
 from .models import ChatSession, ChatConversations
 from .utils import cloud_usage_stats
+from django.core.cache import cache
 # from .voice import voice_to_text
 
 
@@ -46,10 +47,12 @@ def chat_post(request):
     ChatConversations.objects.create(
         session=session,
         user_message=message,
-        ai_message=html_response,
+        ai_message=response,
         input_tokens=usage.get('input_tokens', 0),
         output_tokens=usage.get('output_tokens', 0)
     )
+
+    cache.delete(f"history_{session.id}")
 
     print(f"[DEBUG] session_id: {session.id} | message: {message} | model: {model}")
     return JsonResponse({
@@ -83,11 +86,11 @@ def chat_history_conversations(request, session_id):
         'created_at'
       ).order_by('created_at')
   )
-  # for convo in conversations:
-  #   convo['ai_message'] = markdown.markdown(
-  #     convo['ai_message'], 
-  #     extensions=["fenced_code", "codehilite", "tables"]
-  #   )
+  for convo in conversations:
+    convo['ai_message'] = markdown.markdown(
+      convo['ai_message'], 
+      extensions=["fenced_code", "codehilite", "tables"]
+    )
   return JsonResponse(conversations, safe=False, status=200)
 
 def chat_sessions(request):

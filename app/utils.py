@@ -1,10 +1,26 @@
-from . import prompts
 from .models import WebsiteSettings, ChatConversations
 from django.db.models import Sum, Count
 from django.http import JsonResponse
 from django.conf import settings as django_settings
+from django.core.cache import cache
 
-SYSTEM_PROMPTS = prompts.system_prompt
+def get_system_prompt() -> str:
+  """Fetches the system prompt from cache or database settings."""
+  cache_key = "system_prompt"
+
+  cached = cache.get(cache_key)
+  if cached:
+    return cached
+  prompts = WebsiteSettings.objects.values('system_prompt').first()
+
+  prompt = (prompts.get('system_prompt') or "").strip() \
+    if prompts else ""
+  
+  if not prompt:
+    prompt = "You are a helpful and precise assistant for answering user queries. Always use all available information to provide the best answer. If you don't know the answer, say you don't know. Be concise and clear in your responses."
+
+  cache.set(cache_key, prompt, timeout=600)  # Cache for 1 hour
+  return prompt
 
 
 def get_website_settings(request):

@@ -23,5 +23,20 @@ admin.site.register(ChatConversations, ChatConversationsAdmin)
 
 class WebsiteSettingsAdmin(admin.ModelAdmin):
   list_display = ('website_name', 'maintainance_mode')
+  fieldsets = (
+        ("General", {
+            "fields": ("website_name", "website_description", "website_favicon")
+        }),
+        (
+          "Maintenance", {
+            "fields": ("maintainance_mode",),
+            "description": "Yahan se website ka maintenance mode on/off karo."
+          }
+        ),
+        ("AI Configuration", {
+            "fields": ("system_prompt",),
+            "description": "Yahan se AI ka behavior customize karo."
+        }),
+    )
 
 admin.site.register(WebsiteSettings, WebsiteSettingsAdmin)
