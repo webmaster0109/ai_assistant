@@ -23,6 +23,10 @@ RUN pip install -r requirements.txt
 # Copy project
 COPY . /app/
 
+# Add entrypoint to run startup tasks (migrations) at container runtime
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
 # Expose port 8000
 EXPOSE 8000
 

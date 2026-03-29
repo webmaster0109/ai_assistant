@@ -16,7 +16,7 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 - Real-time chat UI with session-based conversation history
 - Multiple model selection (Gemini, Gemma, GLM, DeepSeek, Qwen, GPT-OSS, Nemotron, Minimax)
 - Automatic chat title generation for new sessions
-- Persistent storage of chat sessions and message history in PostgreSQL
+- Persistent storage of chat sessions and message history (PostgreSQL or SQLite fallback)
 - Sidebar session list with "resume previous chat" behavior
 - Session deletion from sidebar (right-click / long-press)
 - Markdown rendering for AI responses (code blocks, tables, fenced code)
@@ -33,7 +33,8 @@ A Django-based web chat application that connects to Ollama-compatible models, s
 - Django 6
 - LangChain (`langchain`, `langchain-core`, `langchain-ollama`)
 - Ollama Python client (`ollama`)
-- PostgreSQL (via `DATABASE_URL`)
+- PostgreSQL (via `DATABASE_URL`) with SQLite fallback
+- `dj-database-url` for DB URL parsing
 - Redis cache (`django-redis`)
 - Frontend: server-rendered HTML/CSS/JS (no separate SPA build)
 
@@ -81,7 +82,7 @@ ollama_ai/
 ## Prerequisites
 
 - Python 3.13+ installed
-- PostgreSQL server (local or remote)
+- PostgreSQL server (optional, required only when using `DATABASE_URL`)
 - Network access to an Ollama-compatible host
 - Valid API key for your Ollama host
 - `pip` available in your Python environment
@@ -104,6 +105,7 @@ Main runtime dependencies used directly by this project:
 - `Markdown`
 - `psycopg2-binary`
 - `pillow`
+- `dj-database-url`
 - `redis`, `django-redis`
 
 Also present in `requirements.txt`:
@@ -138,6 +140,7 @@ Create a `.env` file in the project root:
 ```env
 OLLAMA_API_KEY=your_api_key_here
 OLLAMA_HOST=https://your-ollama-host
+# Optional: if omitted, project uses SQLite fallback
 DATABASE_URL=postgresql://username:password@host:5432/database_name
 REDIS_URL=redis://127.0.0.1:6379/1
 ```
@@ -156,9 +159,11 @@ Current default cache location in settings is `redis://127.0.0.1:6379/1`.
 - Server-side transcription module exists in `app/voice.py`.
 - Voice endpoint route is currently disabled in `app/urls.py` (`/chat/voice/` commented out).
 
-## Database Setup (PostgreSQL)
+## Database Setup
 
-The current settings are configured for PostgreSQL using `DATABASE_URL`.
+Database behavior in current settings:
+- If `DATABASE_URL` exists -> PostgreSQL via `dj-database-url`
+- If `DATABASE_URL` is missing -> SQLite (`db.sqlite3`)
 
 Example URL formats:
 
