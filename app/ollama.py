@@ -21,6 +21,7 @@ def load_models(model):
     'deepseek-v3.1': 'deepseek-v3.1:671b-cloud',
     'qwen3.5': 'qwen3.5:397b-cloud',
     'minimax-m2.7': 'minimax-m2.7:cloud',
+    'kimi-k2.5': 'kimi-k2.5:cloud',
   }
   return OLLAMA_MODELS[model]
 

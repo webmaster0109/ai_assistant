@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 from urllib.parse import urlparse, parse_qsl
 from dotenv import load_dotenv
+import dj_database_url
 
 load_dotenv()
 
@@ -80,18 +81,34 @@ WSGI_APPLICATION = 'ollama_ai.wsgi.application'
 #     }
 # }
 
-tmpPostgres = urlparse(os.getenv('DATABASE_URL'))
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': tmpPostgres.path.replace('/', ''),
-        'USER': tmpPostgres.username,
-        'PASSWORD': tmpPostgres.password,
-        'HOST': tmpPostgres.hostname,
-        'PORT': 5432,
-        'OPTIONS': dict(parse_qsl(tmpPostgres.query)),
+# tmpPostgres = urlparse(os.getenv('DATABASE_URL'))
+DB_URL = os.getenv('DATABASE_URL')
+if DB_URL:
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=DB_URL, 
+            conn_max_age=600,
+            ssl_require=True,
+        )
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': tmpPostgres.path.replace('/', ''),
+#         'USER': tmpPostgres.username,
+#         'PASSWORD': tmpPostgres.password,
+#         'HOST': tmpPostgres.hostname,
+#         'PORT': 5432,
+#         'OPTIONS': dict(parse_qsl(tmpPostgres.query)),
+#     }
+# }
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
