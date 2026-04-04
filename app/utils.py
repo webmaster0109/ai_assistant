@@ -1,8 +1,9 @@
-from .models import WebsiteSettings, ChatConversations
-from django.db.models import Sum, Count
-from django.http import JsonResponse
 from django.conf import settings as django_settings
 from django.core.cache import cache
+from django.db.models import Count, Sum
+from django.http import JsonResponse
+
+from .models import ChatConversations, WebsiteSettings
 
 def get_system_prompt() -> str:
   """Fetches the system prompt from cache or database settings."""
@@ -24,24 +25,36 @@ def get_system_prompt() -> str:
 
 
 def get_website_settings(request):
+  return get_website_branding()
+
+def get_website_branding():
   settings = WebsiteSettings.objects.values(
     'website_name',
     'website_description',
     'website_favicon'
   ).first()
-  return context_processors(request, settings)
+  return context_processors(None, settings)
 
 def context_processors(request, settings):
   if settings is None:
-    settings = WebsiteSettings.objects.create()
+    instance = WebsiteSettings.objects.create()
+    settings = {
+      'website_name': instance.website_name,
+      'website_description': instance.website_description,
+      'website_favicon': instance.website_favicon.name if instance.website_favicon else None,
+    }
   return {
     'website_name': settings.get('website_name') or "Ollama AI",
     'website_description': settings.get('website_description') or "A powerful AI chatbot platform built with Django and Ollama API.",
     'website_favicon': (django_settings.MEDIA_URL + settings.get('website_favicon') if settings.get('website_favicon') else None),
   }
 
-def usage_stats():
-  stats = ChatConversations.objects.values('input_tokens', 'output_tokens').aggregate(
+def usage_stats(user=None):
+  conversations = ChatConversations.objects.all()
+  if user is not None:
+    conversations = conversations.filter(session__owner=user)
+
+  stats = conversations.values('input_tokens', 'output_tokens').aggregate(
     total_input_tokens=Sum('input_tokens'),
     total_output_tokens=Sum('output_tokens'),
     total_conversations=Count('id')
@@ -49,7 +62,10 @@ def usage_stats():
   return stats
 
 def cloud_usage_stats(request):
-  stats = usage_stats()
+  if not request.user.is_authenticated:
+    return JsonResponse({'detail': 'Authentication required.'}, status=401)
+
+  stats = usage_stats(user=request.user)
   total_tokens = (stats['total_input_tokens'] or 0) + (stats['total_output_tokens'] or 0)
   return JsonResponse({
     'total_input_tokens': stats['total_input_tokens'] or 0,

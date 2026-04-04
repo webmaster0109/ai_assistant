@@ -7,3 +7,5 @@ gha-creds-*.json
 prompts.txt
 .github/
 .claude/
+frontend/node_modules/
+frontend/dist/

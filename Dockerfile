@@ -1,3 +1,11 @@
+FROM node:22-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ /app/frontend/
+RUN npm run build
+
 # Use an official Python runtime as a parent image
 FROM python:3.11-slim
 
@@ -22,6 +30,7 @@ RUN pip install -r requirements.txt
 
 # Copy project
 COPY . /app/
+COPY --from=frontend-builder /app/static/frontend /app/static/frontend
 
 # Add entrypoint to run startup tasks (migrations) at container runtime
 RUN chmod +x /app/entrypoint.sh

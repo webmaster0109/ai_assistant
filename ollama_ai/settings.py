@@ -23,6 +23,19 @@ ALLOWED_HOSTS = [
   '*'
 ]
 
+LOCAL_DEV_PORTS = (8000, 3000, 4173, 5173, 5174, 5175, 5176, 5177, 5178, 5179)
+LOCAL_DEV_ORIGINS = [
+    f"http://{host}:{port}"
+    for host in ("localhost", "127.0.0.1")
+    for port in LOCAL_DEV_PORTS
+]
+EXTRA_CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+CSRF_TRUSTED_ORIGINS = sorted(set(LOCAL_DEV_ORIGINS + EXTRA_CSRF_TRUSTED_ORIGINS))
+
 
 # Application definition
 
@@ -155,8 +168,8 @@ if os.getenv("REDIS_URL"):
 else:
     CACHES = {
         "default": {
-            "BACKEND": "django_redis.cache.RedisCache",
-            "LOCATION": "redis://127.0.0.1:6379/1",
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "ollama-ai-local-cache",
         }
     }
 
