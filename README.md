@@ -2,6 +2,17 @@
 
 A Django + React chat application for Ollama-compatible hosted models, with authentication, per-user session history, token usage tracking, and dynamic site branding from Django admin.
 
+<img width="1366" height="607" alt="image" src="https://github.com/user-attachments/assets/9c44fa6a-e9f5-450c-8b77-35a1175fc2fa" />
+
+<img width="1366" height="607" alt="image" src="https://github.com/user-attachments/assets/f3592262-fa98-4968-9e40-4ac709049883" />
+
+<img width="1366" height="607" alt="image" src="https://github.com/user-attachments/assets/31d137da-1365-4921-9c8f-11814754ee0e" />
+
+<img width="1366" height="607" alt="image" src="https://github.com/user-attachments/assets/88636f44-10ea-46b4-a2ad-ec941a8519a1" />
+
+<img width="1366" height="611" alt="image" src="https://github.com/user-attachments/assets/f152eeb5-4bad-4fc8-9d43-d6ca1ad93d0d" />
+
+
 ## Features
 
 - Email/username login and registration
