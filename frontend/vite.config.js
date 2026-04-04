@@ -18,7 +18,7 @@ export default defineConfig(({ command }) => ({
     },
   },
   build: {
-    outDir: resolve(currentDirectory, "../static/frontend"),
+    outDir: resolve(currentDirectory, "../backend/static/frontend"),
     emptyOutDir: true,
     cssCodeSplit: false,
     rollupOptions: {

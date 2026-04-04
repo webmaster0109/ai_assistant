@@ -2,6 +2,7 @@
 
 A Django + React chat application for Ollama-compatible hosted models, with authentication, per-user session history, token usage tracking, and dynamic site branding from Django admin.
 
+<<<<<<< HEAD
 <img width="1366" height="607" alt="image" src="https://github.com/user-attachments/assets/9c44fa6a-e9f5-450c-8b77-35a1175fc2fa" />
 
 <img width="1366" height="607" alt="image" src="https://github.com/user-attachments/assets/f3592262-fa98-4968-9e40-4ac709049883" />
@@ -12,6 +13,13 @@ A Django + React chat application for Ollama-compatible hosted models, with auth
 
 <img width="1366" height="611" alt="image" src="https://github.com/user-attachments/assets/f152eeb5-4bad-4fc8-9d43-d6ca1ad93d0d" />
 
+=======
+## Project Structure
+
+- `backend/` -> Django app, API, templates, static/media, migrations, and Python dependencies
+- `frontend/` -> React/Vite application
+- root -> Docker/config/docs files that coordinate both sides
+>>>>>>> ba9ee8a (Refactor code structure for improved readability and maintainability)
 
 ## Features
 
@@ -46,7 +54,7 @@ A Django + React chat application for Ollama-compatible hosted models, with auth
 Install Python dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 ```
 
 Install frontend dependencies (if you want to run/build frontend manually):
@@ -70,7 +78,7 @@ CSRF_TRUSTED_ORIGINS=https://your-domain.com,https://www.your-domain.com
 
 Notes:
 
-- `DATABASE_URL` is optional. If omitted, SQLite (`db.sqlite3`) is used.
+- `DATABASE_URL` is optional. If omitted, SQLite (`backend/db.sqlite3`) is used.
 - If `REDIS_URL` is omitted, Django uses local memory cache.
 - Current DB config sets `ssl_require=True` when `DATABASE_URL` is present.
 
@@ -80,7 +88,8 @@ Notes:
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
+cd backend
 python manage.py migrate
 python manage.py runserver
 ```
@@ -93,6 +102,7 @@ Open:
 Optional admin user:
 
 ```bash
+cd backend
 python manage.py createsuperuser
 ```
 
@@ -113,7 +123,7 @@ cd frontend
 npm run build
 ```
 
-Built files are served from `static/frontend/assets/*` via Django staticfiles.
+Built files are served from `backend/static/frontend/assets/*` via Django staticfiles.
 
 ## Docker
 
@@ -125,7 +135,7 @@ docker compose up --build
 
 What happens on container start:
 
-- `entrypoint.sh` runs `python manage.py migrate --noinput`
+- `backend/entrypoint.sh` runs `python manage.py migrate --noinput`
 - Then Gunicorn starts
 
 Important:
@@ -137,7 +147,7 @@ Important:
 
 ### Public/Auth
 
-- `GET /` -> serve `templates/app.html`
+- `GET /` -> serve `backend/templates/app.html`
 - `GET /api/auth/me/` -> auth status + branding
 - `POST /api/auth/register/`
 - `POST /api/auth/login/`
@@ -194,7 +204,7 @@ Response shape:
 
 ## Supported Model Keys
 
-Defined in `app/ollama.py`:
+Defined in `backend/app/ollama.py`:
 
 - `glm-5`
 - `glm-4.7`
@@ -242,43 +252,45 @@ Defined in `app/ollama.py`:
 
 ```text
 ollama_ai/
-├── app/
-│   ├── admin.py
-│   ├── langchain.py
-│   ├── middlewares/
-│   ├── migrations/
-│   ├── models.py
-│   ├── ollama.py
-│   ├── streaming.py
-│   ├── urls.py
-│   ├── utils.py
-│   ├── views.py
-│   └── voice.py
+├── backend/
+│   ├── app/
+│   │   ├── admin.py
+│   │   ├── langchain.py
+│   │   ├── middlewares/
+│   │   ├── migrations/
+│   │   ├── models.py
+│   │   ├── ollama.py
+│   │   ├── streaming.py
+│   │   ├── urls.py
+│   │   ├── utils.py
+│   │   ├── views.py
+│   │   └── voice.py
+│   ├── ollama_ai/
+│   │   ├── settings.py
+│   │   └── urls.py
+│   ├── public/static/
+│   │   ├── css/
+│   │   ├── favicons/
+│   │   └── js/
+│   ├── static/frontend/
+│   ├── templates/
+│   │   ├── app.html
+│   │   └── chat.html
+│   ├── entrypoint.sh
+│   ├── requirements.txt
+│   └── manage.py
 ├── frontend/
 │   ├── src/
 │   ├── package.json
 │   └── vite.config.js
-├── ollama_ai/
-│   ├── settings.py
-│   └── urls.py
-├── public/static/
-│   ├── css/
-│   ├── favicons/
-│   └── js/
-├── static/frontend/
-├── templates/
-│   ├── app.html
-│   └── chat.html
 ├── Dockerfile
-├── docker-compose.yml
-├── entrypoint.sh
-├── requirements.txt
-└── manage.py
+└── docker-compose.yml
 ```
 
 ## Useful Commands
 
 ```bash
+cd backend
 python manage.py check
 python manage.py test
 python manage.py makemigrations
@@ -288,6 +300,6 @@ python manage.py createsuperuser
 
 ## Notes
 
-- `templates/chat.html` and files under `public/static/js/*` are present, but current root route serves `templates/app.html`.
-- `app/voice.py` and `app/streaming.py` are not currently wired in `app/urls.py`.
+- `backend/templates/chat.html` and files under `backend/public/static/js/*` are present, but current root route serves `backend/templates/app.html`.
+- `backend/app/voice.py` and `backend/app/streaming.py` are not currently wired in `backend/app/urls.py`.
 - If you enable production mode, tighten `ALLOWED_HOSTS`, set secure CSRF origins, and move secrets to environment-managed storage.

@@ -1,7 +1,7 @@
-python manage.py runserver
-python manage.py makemigrations
-python manage.py migrate
-python manage.py createsuperuser
-python manage.py shell
-python manage.py 
+cd backend && python manage.py runserver
+cd backend && python manage.py makemigrations
+cd backend && python manage.py migrate
+cd backend && python manage.py createsuperuser
+cd backend && python manage.py shell
+cd backend && python manage.py
 source venv/bin/activate

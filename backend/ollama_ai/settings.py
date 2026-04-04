@@ -1,10 +1,12 @@
-from pathlib import Path
 import os
+from pathlib import Path
 from urllib.parse import urlparse, parse_qsl
-from dotenv import load_dotenv
-import dj_database_url
 
-load_dotenv()
+import dj_database_url
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent

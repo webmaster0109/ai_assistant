@@ -642,16 +642,29 @@ function SessionList({
   sessions,
   activeSessionId,
   currentPage,
+  sidebarOpen,
   onNewChat,
+  onClose,
   onOpenChats,
   onOpenProfile,
   onSelect,
   onDelete,
 }) {
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${sidebarOpen ? "is-open" : ""}`}>
       <div className="sidebar-block">
-        <p className="eyebrow">Workspace</p>
+        <div className="sidebar-mobile-head">
+          <p className="eyebrow">Workspace</p>
+          <button
+            className="secondary-button icon-button sidebar-mobile-close"
+            type="button"
+            onClick={onClose}
+            aria-label="Close sidebar"
+            title="Close sidebar"
+          >
+            <i className="bi bi-x-lg" />
+          </button>
+        </div>
         <p className="small-note">Your recent private chats live here.</p>
         <SidebarNav
           currentPage={currentPage}
@@ -889,6 +902,7 @@ function MessageList({ branding, messages, pendingPrompt, loadingConversation })
 export default function App() {
   const [theme, setTheme] = useState(getInitialTheme);
   const [currentPage, setCurrentPage] = useState("chat");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [branding, setBranding] = useState(initialBranding);
   const [authReady, setAuthReady] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -1135,6 +1149,7 @@ export default function App() {
 
   function handleNewChat() {
     setCurrentPage("chat");
+    setSidebarOpen(false);
     setActiveSessionId(null);
     setMessages([]);
     setPendingPrompt("");
@@ -1229,77 +1244,107 @@ export default function App() {
   }
 
   return (
-    <>
-      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
-      <div className="app-shell">
-        <SessionList
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          currentPage={currentPage}
-          onNewChat={handleNewChat}
-          onOpenChats={() => setCurrentPage("chat")}
-          onOpenProfile={() => setCurrentPage("profile")}
-          onSelect={handleSelectSession}
-          onDelete={handleDeleteSession}
-        />
+      <>
+        <ToastViewport toasts={toasts} onDismiss={dismissToast} />
+        {sidebarOpen ? (
+          <button
+            className="sidebar-backdrop"
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close sidebar"
+          />
+        ) : null}
+        <div className="app-shell">
+          <SessionList
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            currentPage={currentPage}
+            sidebarOpen={sidebarOpen}
+            onNewChat={handleNewChat}
+            onClose={() => setSidebarOpen(false)}
+            onOpenChats={() => {
+              setCurrentPage("chat");
+              setSidebarOpen(false);
+            }}
+            onOpenProfile={() => {
+              setCurrentPage("profile");
+              setSidebarOpen(false);
+            }}
+            onSelect={(sessionId) => {
+              setSidebarOpen(false);
+              return handleSelectSession(sessionId);
+            }}
+            onDelete={handleDeleteSession}
+          />
 
-        <main className="workspace">
-          <header className="workspace-header">
-            <div>
-              <p className="eyebrow">Authenticated workspace</p>
-              <h1>{currentPage === "profile" ? "Profile" : activeSession?.title || "New conversation"}</h1>
-              {currentPage === "profile" ? (
-                <p className="workspace-subtitle">
-                  A separate page for this user’s account details and usage totals.
-                </p>
-              ) : null}
-            </div>
+          <main className="workspace">
+            <header className="workspace-header">
+              <div className="workspace-heading">
+                <button
+                  className="secondary-button icon-button mobile-sidebar-toggle"
+                  type="button"
+                  onClick={() => setSidebarOpen((current) => !current)}
+                  aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+                  title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+                >
+                  <i className={`bi ${sidebarOpen ? "bi-x-lg" : "bi-list"}`} />
+                </button>
+                <div className="workspace-heading-copy">
+                  <p className="eyebrow">Authenticated workspace</p>
+                  <h1>{currentPage === "profile" ? "Profile" : activeSession?.title || "New conversation"}</h1>
+                  {currentPage === "profile" ? (
+                    <p className="workspace-subtitle">
+                      A separate page for this user’s account details and usage totals.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
 
-            <div className="workspace-actions">
-              <ThemeToggle
-                theme={theme}
-                onToggle={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-              />
-              <button
-                className="secondary-button icon-button"
-                type="button"
-                onClick={handleLogout}
-                title="Logout"
-                aria-label="Logout"
-              >
-                <i className="bi bi-power" />
-              </button>
-            </div>
-          </header>
-
-          {currentPage === "profile" ? (
-            <ProfilePage currentUser={currentUser} usage={usage} sessions={sessions} />
-          ) : (
-            <>
-              <section className="conversation-panel">
-                <MessageList
-                  branding={branding}
-                  messages={messages}
-                  pendingPrompt={pendingPrompt}
-                  loadingConversation={loadingConversation}
+              <div className="workspace-actions">
+                <ThemeToggle
+                  theme={theme}
+                  onToggle={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
                 />
-              </section>
+                <button
+                  className="secondary-button icon-button"
+                  type="button"
+                  onClick={handleLogout}
+                  title="Logout"
+                  aria-label="Logout"
+                >
+                  <i className="bi bi-power" />
+                </button>
+              </div>
+            </header>
 
-              <ChatComposer
-                draft={draft}
-                model={activeSession?.model || selectedModel}
-                models={models}
-                isLocked={Boolean(activeSession)}
-                sending={sending}
-                onDraftChange={(event) => setDraft(event.target.value)}
-                onDraftKeyDown={handleDraftKeyDown}
-                onModelChange={(event) => setSelectedModel(event.target.value)}
-                onSubmit={handleSendMessage}
-              />
-            </>
-          )}
-        </main>
-      </div>
-    </>
+            {currentPage === "profile" ? (
+              <ProfilePage currentUser={currentUser} usage={usage} sessions={sessions} />
+            ) : (
+              <>
+                <section className="conversation-panel">
+                  <MessageList
+                    branding={branding}
+                    messages={messages}
+                    pendingPrompt={pendingPrompt}
+                    loadingConversation={loadingConversation}
+                  />
+                </section>
+
+                <ChatComposer
+                  draft={draft}
+                  model={activeSession?.model || selectedModel}
+                  models={models}
+                  isLocked={Boolean(activeSession)}
+                  sending={sending}
+                  onDraftChange={(event) => setDraft(event.target.value)}
+                  onDraftKeyDown={handleDraftKeyDown}
+                  onModelChange={(event) => setSelectedModel(event.target.value)}
+                  onSubmit={handleSendMessage}
+                />
+              </>
+            )}
+          </main>
+        </div>
+      </>
   );
 }
