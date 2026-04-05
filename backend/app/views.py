@@ -197,7 +197,7 @@ def app_shell(request, share_token=None):
 @require_GET
 def favicon(request):
     branding = get_website_branding()
-    favicon_url = branding.get("website_favicon") or static("frontend/pwa-icon.svg")
+    favicon_url = branding.get("website_favicon") or static("frontend/pwa-icon-192.png")
     return HttpResponseRedirect(favicon_url)
 
 
@@ -210,40 +210,34 @@ def service_worker(request):
 @require_GET
 def web_manifest(request):
     branding = get_website_branding()
-    icons = []
-    if branding.get("website_favicon"):
-        icons = [
-            {
-                "src": branding["website_favicon"],
-                "sizes": "192x192",
-                "purpose": "any",
-            },
-            {
-                "src": branding["website_favicon"],
-                "sizes": "512x512",
-                "purpose": "any maskable",
-            },
-        ]
-    else:
-        icons = [
-            {
-                "src": "/static/frontend/pwa-icon.svg",
-                "sizes": "any",
-                "type": "image/svg+xml",
-                "purpose": "any maskable",
-            },
-        ]
+    icons = [
+        {
+            "src": "/static/frontend/pwa-icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any",
+        },
+        {
+            "src": "/static/frontend/pwa-icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable",
+        },
+    ]
 
     return JsonResponse(
         {
             "name": branding.get("website_name") or "Ollama AI",
             "short_name": branding.get("website_name") or "Ollama AI",
             "description": branding.get("website_description") or "Private AI chat workspace",
+            "id": "/",
             "start_url": "/",
             "scope": "/",
+            "display_override": ["standalone", "minimal-ui", "browser"],
             "display": "standalone",
             "background_color": "#0c1116",
             "theme_color": "#17594a",
+            "prefer_related_applications": False,
             "icons": icons,
         },
         content_type="application/manifest+json",

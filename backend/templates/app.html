@@ -17,18 +17,18 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link
       rel="apple-touch-icon"
-      href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}"
+      href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon-192.png' %}{% endif %}"
     />
     <link
       id="app-favicon"
       rel="icon"
-      type="{% if website_favicon %}image/x-icon{% else %}image/svg+xml{% endif %}"
-      href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}"
+      type="{% if website_favicon %}image/x-icon{% else %}image/png{% endif %}"
+      href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon-192.png' %}{% endif %}"
     />
     <link
       rel="shortcut icon"
-      href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}"
-      type="{% if website_favicon %}image/x-icon{% else %}image/svg+xml{% endif %}"
+      href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon-192.png' %}{% endif %}"
+      type="{% if website_favicon %}image/x-icon{% else %}image/png{% endif %}"
     />
     <link
       rel="stylesheet"
