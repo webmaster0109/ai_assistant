@@ -1811,7 +1811,6 @@ p {
     padding: 16px;
   }
 
-  .composer-inline,
   .usage-grid,
   .document-panel {
     grid-template-columns: 1fr;
@@ -1956,14 +1955,41 @@ p {
   }
 
   .composer .model-picker {
-    flex-direction: column;
-    align-items: stretch;
-    flex: 1 1 auto;
-    gap: 6px;
+    flex: 1 1 0;
+    min-width: 0;
   }
 
-  .composer .model-picker span {
-    min-width: 0;
+  .composer-inline {
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .composer-input-wrap {
+    order: 3;
+    flex: 1 1 100%;
+  }
+
+  .composer-icon-button {
+    order: 2;
+    width: 52px;
+    min-width: 52px;
+    flex: 0 0 52px;
+  }
+
+  .composer-button {
+    order: 4;
+    width: 100%;
+  }
+
+  .composer .model-picker {
+    order: 1;
+  }
+
+  .composer textarea {
+    min-height: 50px;
+    height: 50px;
+    max-height: 50px;
   }
 
   .session-card {
