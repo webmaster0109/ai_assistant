@@ -1,4 +1,5 @@
 import { Fragment, startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
 import css from "highlight.js/lib/languages/css";
@@ -2721,6 +2722,7 @@ export default function App() {
             )}
           </main>
         </div>
+        <Analytics />
       </>
   );
 }
