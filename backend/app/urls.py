@@ -13,6 +13,12 @@ urlpatterns = [
     path('api/auth/logout/', views.logout_user, name='logout_user'),
     path('api/models/', views.models_catalog, name='models_catalog'),
     path('api/chat/', views.chat_post, name='chat_post'),
+    path('api/chat/documents/', views.upload_chat_document, name='upload_chat_document'),
+    path(
+        'api/chat/sessions/<str:session_id>/documents/<int:document_id>/select/',
+        views.select_chat_document,
+        name='select_chat_document',
+    ),
     path('api/chat/stream/', views.chat_stream, name='chat_stream'),
     path('api/chat/streams/<str:stream_id>/stop/', views.stop_chat_stream, name='stop_chat_stream'),
     path('api/chat/sessions/', views.chat_sessions, name='chat_sessions'),

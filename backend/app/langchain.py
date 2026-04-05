@@ -9,6 +9,7 @@ import os
 from dotenv import load_dotenv
 from .models import ChatConversations
 from .utils import get_system_prompt
+from .documents import build_document_context
 
 from django.core.cache import cache
 import pickle
@@ -85,11 +86,24 @@ def iter_stream_chunks(content: str):
     return [content] if content else []
   return parts
 
+def build_chat_system_prompt(base_prompt: str, document_context: str = "") -> str:
+  if not document_context:
+    return base_prompt
+
+  return (
+    f"{base_prompt}\n\n"
+    "The user has uploaded a PDF for this chat. Use the document context below when answering. "
+    "If the answer is not supported by the document context, say that clearly instead of inventing details.\n\n"
+    f"Document context:\n{document_context}"
+  )
+
 def conversation_chain(models, question, session_id="default", history=None):
   system_prompt = get_system_prompt()
+  document_context = build_document_context(session_id, question)
+  resolved_system_prompt = build_chat_system_prompt(system_prompt, document_context)
 
   prompt = ChatPromptTemplate.from_messages([
-      SystemMessage(content=system_prompt),
+      SystemMessage(content=resolved_system_prompt),
       MessagesPlaceholder(variable_name="history"),
       ("human", "{input}"),
   ])
@@ -158,9 +172,11 @@ def conversation_chain_stream(models, question, session_id="default", stream_id=
     """Stream chunks and emit a final payload with usage and stop status."""
 
     system_prompt = get_system_prompt()
+    document_context = build_document_context(session_id, question)
+    resolved_system_prompt = build_chat_system_prompt(system_prompt, document_context)
     
     prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=system_prompt),
+        SystemMessage(content=resolved_system_prompt),
         MessagesPlaceholder(variable_name="history"),
         ("human", "{input}"),
     ])

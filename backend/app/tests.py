@@ -3,8 +3,9 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
 
-from .models import ChatConversations, ChatSession
+from .models import ChatConversations, ChatDocument, ChatSession
 
 
 User = get_user_model()
@@ -270,6 +271,176 @@ class ChatPrivacyTests(TestCase):
         model_names = {item["model"] for item in payload["models"]}
         self.assertIn("glm-5", model_names)
         self.assertIn("deepseek-v3.2", model_names)
+
+    @patch("app.views.extract_pdf_chunks", return_value=[
+        {"page_number": 1, "content": "Django request lifecycle details."},
+        {"page_number": 2, "content": "Middleware and URL resolution."},
+    ])
+    def test_pdf_upload_creates_document_session_and_chunks(self, mocked_extract):
+        self.client.force_login(self.owner)
+        file_obj = SimpleUploadedFile(
+            "guide.pdf",
+            b"%PDF-1.4 fake pdf bytes",
+            content_type="application/pdf",
+        )
+
+        response = self.client.post(
+            "/api/chat/documents/",
+            data={"file": file_obj, "model": "glm-5"},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        session = ChatSession.objects.get(id=payload["session"]["id"])
+        document = ChatDocument.objects.get(session=session, is_active=True)
+        self.assertEqual(session.owner, self.owner)
+        self.assertEqual(session.model, "glm-5")
+        self.assertEqual(document.filename, "guide.pdf")
+        self.assertEqual(document.chunks.count(), 2)
+        self.assertEqual(session.documents.count(), 1)
+        mocked_extract.assert_called_once()
+
+    @patch("app.views.extract_pdf_chunks")
+    def test_pdf_upload_preserves_older_documents_and_marks_latest_active(self, mocked_extract):
+        mocked_extract.side_effect = [
+            [{"page_number": 1, "content": "First PDF content"}],
+            [{"page_number": 1, "content": "Second PDF content"}],
+        ]
+        self.client.force_login(self.owner)
+
+        first_response = self.client.post(
+            "/api/chat/documents/",
+            data={
+                "file": SimpleUploadedFile("first.pdf", b"%PDF-1.4 first", content_type="application/pdf"),
+                "model": "glm-5",
+            },
+        )
+        session_id = first_response.json()["session"]["id"]
+
+        second_response = self.client.post(
+            "/api/chat/documents/",
+            data={
+                "file": SimpleUploadedFile("second.pdf", b"%PDF-1.4 second", content_type="application/pdf"),
+                "session_id": session_id,
+            },
+        )
+
+        self.assertEqual(second_response.status_code, 201)
+        session = ChatSession.objects.get(id=session_id)
+        documents = list(session.documents.order_by("uploaded_at"))
+        self.assertEqual(len(documents), 2)
+        self.assertFalse(documents[0].is_active)
+        self.assertTrue(documents[1].is_active)
+        self.assertEqual(documents[0].filename, "first.pdf")
+        self.assertEqual(documents[1].filename, "second.pdf")
+
+    @patch("app.views.extract_pdf_chunks", return_value=[
+        {"page_number": 1, "content": "Reusable PDF content"},
+    ])
+    def test_same_pdf_is_reused_within_same_chat_session(self, mocked_extract):
+        self.client.force_login(self.owner)
+
+        first_response = self.client.post(
+            "/api/chat/documents/",
+            data={
+                "file": SimpleUploadedFile("guide.pdf", b"%PDF-1.4 same-bytes", content_type="application/pdf"),
+                "model": "glm-5",
+            },
+        )
+        session_id = first_response.json()["session"]["id"]
+
+        second_response = self.client.post(
+            "/api/chat/documents/",
+            data={
+                "file": SimpleUploadedFile("guide-again.pdf", b"%PDF-1.4 same-bytes", content_type="application/pdf"),
+                "session_id": session_id,
+            },
+        )
+
+        self.assertEqual(second_response.status_code, 200)
+        payload = second_response.json()
+        session = ChatSession.objects.get(id=session_id)
+        self.assertEqual(session.documents.count(), 1)
+        reused_document = session.documents.get()
+        self.assertEqual(payload["document"]["id"], reused_document.id)
+        self.assertTrue(payload["reused"])
+        mocked_extract.assert_called_once()
+
+    def test_document_selection_switches_active_pdf(self):
+        self.client.force_login(self.owner)
+        first_document = ChatDocument.objects.create(
+            session=self.session,
+            file=SimpleUploadedFile("first.pdf", b"%PDF-1.4 first", content_type="application/pdf"),
+            filename="first.pdf",
+            is_active=True,
+            extracted_characters=1200,
+        )
+        second_document = ChatDocument.objects.create(
+            session=self.session,
+            file=SimpleUploadedFile("second.pdf", b"%PDF-1.4 second", content_type="application/pdf"),
+            filename="second.pdf",
+            is_active=False,
+            extracted_characters=2200,
+        )
+
+        response = self.client.post(
+            f"/api/chat/sessions/{self.session.id}/documents/{second_document.id}/select/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        first_document.refresh_from_db()
+        second_document.refresh_from_db()
+        self.assertFalse(first_document.is_active)
+        self.assertTrue(second_document.is_active)
+        payload = response.json()
+        self.assertEqual(payload["document"]["id"], second_document.id)
+        self.assertEqual(payload["session"]["document"]["id"], second_document.id)
+
+    def test_pdf_upload_rejects_unsupported_model(self):
+        self.client.force_login(self.owner)
+        file_obj = SimpleUploadedFile(
+            "guide.pdf",
+            b"%PDF-1.4 fake pdf bytes",
+            content_type="application/pdf",
+        )
+
+        response = self.client.post(
+            "/api/chat/documents/",
+            data={"file": file_obj, "model": "glm-4.7"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["detail"],
+            "This model does not support document chat. Choose one of the unlocked document models.",
+        )
+
+    def test_pdf_upload_rejects_file_larger_than_ten_mb(self):
+        self.client.force_login(self.owner)
+        file_obj = SimpleUploadedFile(
+            "large-guide.pdf",
+            b"x" * ((10 * 1024 * 1024) + 1),
+            content_type="application/pdf",
+        )
+
+        response = self.client.post(
+            "/api/chat/documents/",
+            data={"file": file_obj, "model": "glm-5"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "PDF size must be 10 MB or less.")
+
+    def test_models_catalog_exposes_document_support(self):
+        response = self.client.get("/api/models/")
+        self.assertEqual(response.status_code, 200)
+        models = response.json()["models"]
+        glm5 = next(item for item in models if item["key"] == "glm-5")
+        glm47 = next(item for item in models if item["key"] == "glm-4.7")
+        self.assertTrue(glm5["supports_documents"])
+        self.assertFalse(glm47["supports_documents"])
 
     @patch(
         "app.views.conversation_chain_stream",

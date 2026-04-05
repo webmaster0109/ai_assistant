@@ -9,3 +9,5 @@ prompts.txt
 .claude/
 node_modules/
 frontend/dist/
+*.pdf
+chat_documents/

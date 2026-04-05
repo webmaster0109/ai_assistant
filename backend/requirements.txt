@@ -21,3 +21,4 @@ redis
 django-redis
 langchain-ollama
 dj-database-url
+pypdf

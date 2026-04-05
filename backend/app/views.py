@@ -1,5 +1,6 @@
 import json
 import uuid
+import hashlib
 from functools import wraps
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
@@ -20,13 +21,16 @@ from .langchain import (
     request_stream_stop,
     set_session_history,
 )
-from .models import ChatConversations, ChatSession
-from .ollama import list_models
+from .documents import extract_pdf_chunks, replace_document_chunks
+from .models import ChatConversations, ChatDocument, ChatSession
+from .ollama import list_models, supports_documents
 from .utils import cloud_usage_by_model, cloud_usage_stats, get_website_branding
 
 
 User = get_user_model()
 MAX_PINNED_SESSIONS = 3
+ALLOWED_DOCUMENT_CONTENT_TYPES = {"application/pdf"}
+MAX_DOCUMENT_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 def parse_request_data(request):
@@ -57,6 +61,27 @@ def build_share_path(session):
     if not session.is_public or not session.share_token:
         return ""
     return f"/share/{session.share_token}/"
+
+
+def hash_uploaded_file(uploaded_file):
+    digest = hashlib.sha256()
+    for chunk in uploaded_file.chunks():
+        digest.update(chunk)
+    uploaded_file.seek(0)
+    return digest.hexdigest()
+
+
+def ensure_document_file_hash(document):
+    if document.file_hash:
+        return document.file_hash
+
+    digest = hashlib.sha256()
+    with document.file.open("rb") as stored_file:
+        for chunk in iter(lambda: stored_file.read(8192), b""):
+            digest.update(chunk)
+    document.file_hash = digest.hexdigest()
+    document.save(update_fields=["file_hash"])
+    return document.file_hash
 
 
 def login_required_json(view_func):
@@ -93,8 +118,20 @@ def serialize_user(user):
     }
 
 
+def serialize_document(document):
+    return {
+        "id": document.id,
+        "name": document.filename,
+        "uploaded_at": document.uploaded_at.isoformat(),
+        "extracted_characters": document.extracted_characters,
+        "is_active": document.is_active,
+    }
+
+
 def serialize_session(session):
     latest_conversation = session.conversations.order_by("-created_at").first()
+    documents = session.get_documents()
+    active_document = session.get_active_document()
     return {
         "id": session.id,
         "title": session.title,
@@ -102,6 +139,8 @@ def serialize_session(session):
         "is_pinned": session.is_pinned,
         "is_public": session.is_public,
         "share_url": build_share_path(session),
+        "document": serialize_document(active_document) if active_document else None,
+        "documents": [serialize_document(document) for document in documents],
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
         "preview": latest_conversation.user_message[:120] if latest_conversation else "",
@@ -131,7 +170,7 @@ def get_public_session_or_404(share_token):
 def ordered_sessions_for_user(user):
     return (
         ChatSession.objects.filter(owner=user)
-        .prefetch_related("conversations")
+        .prefetch_related("conversations", "documents")
         .order_by("-is_pinned", "-updated_at")
     )
 
@@ -139,7 +178,16 @@ def ordered_sessions_for_user(user):
 @ensure_csrf_cookie
 @require_GET
 def app_shell(request):
-    return render(request, "app.html")
+    branding = get_website_branding()
+    return render(
+        request,
+        "app.html",
+        {
+            "website_name": branding.get("website_name") or "Ollama AI",
+            "website_description": branding.get("website_description") or "Private AI chat workspace",
+            "website_favicon": branding.get("website_favicon") or "",
+        },
+    )
 
 
 @require_GET
@@ -284,6 +332,148 @@ def chat_history_conversations(request, session_id):
         {
             "session": serialize_session(session),
             "messages": [serialize_message(conversation) for conversation in conversations],
+        },
+        status=200,
+    )
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def upload_chat_document(request):
+    uploaded_file = request.FILES.get("file")
+    session_id = (request.POST.get("session_id") or "").strip()
+    requested_model = (request.POST.get("model") or "").strip()
+
+    if uploaded_file is None:
+        return json_error("Please choose a PDF file to upload.")
+
+    if uploaded_file.content_type not in ALLOWED_DOCUMENT_CONTENT_TYPES:
+        return json_error("Only PDF files are supported right now. Image chat needs OCR setup first.")
+
+    if uploaded_file.size > MAX_DOCUMENT_UPLOAD_BYTES:
+        return json_error("PDF size must be 10 MB or less.")
+
+    if session_id:
+        session = get_owned_session_or_404(request, session_id)
+        if session is None:
+            return json_error("Session not found.", status=404)
+        model_key = session.model
+    else:
+        model_key = requested_model
+        if not model_key:
+            return json_error("Please choose a document-capable model first.")
+        available_keys = {item["key"] for item in list_models()}
+        if model_key not in available_keys:
+            return json_error("Please choose a valid model.")
+        session = None
+
+    if not supports_documents(model_key):
+        return json_error("This model does not support document chat. Choose one of the unlocked document models.")
+
+    if session is None:
+        session = ChatSession.objects.create(
+            owner=request.user,
+            model=model_key,
+            title=fallback_title(uploaded_file.name.rsplit(".", 1)[0]),
+        )
+
+    uploaded_file_hash = hash_uploaded_file(uploaded_file)
+    existing_documents = list(session.documents.all())
+    duplicate_document = next(
+        (
+            document
+            for document in existing_documents
+            if ensure_document_file_hash(document) == uploaded_file_hash
+        ),
+        None,
+    )
+    if duplicate_document is not None:
+        session.documents.exclude(id=duplicate_document.id).filter(is_active=True).update(is_active=False)
+        if not duplicate_document.is_active:
+            duplicate_document.is_active = True
+            duplicate_document.save(update_fields=["is_active"])
+
+        clear_history_cache(session.id)
+        session.updated_at = timezone.now()
+        session.save(update_fields=["updated_at"])
+
+        session = ordered_sessions_for_user(request.user).filter(id=session.id).first() or session
+        return JsonResponse(
+            {
+                "session": serialize_session(session),
+                "document": serialize_document(duplicate_document),
+                "reused": True,
+            },
+            status=200,
+        )
+
+    document = ChatDocument.objects.create(
+        session=session,
+        file=uploaded_file,
+        filename=uploaded_file.name,
+        file_hash=uploaded_file_hash,
+        is_active=False,
+    )
+
+    try:
+        chunks = extract_pdf_chunks(document.file.path)
+    except Exception:
+        document.file.delete(save=False)
+        document.delete()
+        raise
+
+    if not chunks:
+        document.file.delete(save=False)
+        document.delete()
+        return json_error("No readable text was found in this PDF.")
+
+    replace_document_chunks(document, chunks)
+    document.extracted_characters = sum(len(chunk["content"]) for chunk in chunks)
+    ChatDocument.objects.filter(session=session, is_active=True).update(is_active=False)
+    document.is_active = True
+    document.save(update_fields=["extracted_characters", "is_active"])
+
+    clear_history_cache(session.id)
+    session.updated_at = timezone.now()
+    session.save(update_fields=["updated_at"])
+
+    return JsonResponse(
+        {
+            "session": serialize_session(session),
+            "document": {
+                **serialize_document(document),
+                "chunk_count": len(chunks),
+            },
+        },
+        status=201,
+    )
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def select_chat_document(request, session_id, document_id):
+    session = get_owned_session_or_404(request, session_id)
+    if session is None:
+        return json_error("Session not found.", status=404)
+
+    document = session.documents.filter(id=document_id).first()
+    if document is None:
+        return json_error("Document not found.", status=404)
+
+    session.documents.exclude(id=document.id).filter(is_active=True).update(is_active=False)
+    if not document.is_active:
+        document.is_active = True
+        document.save(update_fields=["is_active"])
+
+    clear_history_cache(session.id)
+    session.updated_at = timezone.now()
+    session.save(update_fields=["updated_at"])
+
+    session = ordered_sessions_for_user(request.user).filter(id=session.id).first() or session
+    return JsonResponse(
+        {
+            "session": serialize_session(session),
+            "document": serialize_document(document),
         },
         status=200,
     )
@@ -670,6 +860,8 @@ __all__ = [
     "logout_user",
     "models_catalog",
     "chat_post",
+    "upload_chat_document",
+    "select_chat_document",
     "chat_stream",
     "chat_sessions",
     "chat_history_conversations",

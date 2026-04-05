@@ -28,6 +28,61 @@ class ChatSession(models.Model):
     def __str__(self):
         return f"{self.owner} - {self.model} - {self.title}"
 
+    def get_documents(self):
+        prefetched = getattr(self, "_prefetched_objects_cache", {}).get("documents")
+        if prefetched is not None:
+            return sorted(prefetched, key=lambda item: (not item.is_active, -item.uploaded_at.timestamp()))
+        return list(self.documents.order_by("-is_active", "-uploaded_at"))
+
+    def get_active_document(self):
+        for document in self.get_documents():
+            if document.is_active:
+                return document
+        return None
+
+
+class ChatDocument(models.Model):
+    session = models.ForeignKey(
+        ChatSession,
+        on_delete=models.CASCADE,
+        related_name="documents",
+    )
+    file = models.FileField(upload_to="chat_documents/")
+    filename = models.CharField(max_length=255)
+    file_hash = models.CharField(max_length=64, blank=True, default="")
+    is_active = models.BooleanField(default=False)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    extracted_characters = models.IntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["session", "-is_active", "-uploaded_at"], name="app_chatdoc_sess_a_idx"),
+            models.Index(fields=["session", "file_hash"], name="app_chatdoc_sess_f_idx"),
+        ]
+
+    def __str__(self):
+        return self.filename
+
+
+class ChatDocumentChunk(models.Model):
+    document = models.ForeignKey(
+        ChatDocument,
+        on_delete=models.CASCADE,
+        related_name="chunks",
+    )
+    chunk_index = models.PositiveIntegerField()
+    page_number = models.PositiveIntegerField(null=True, blank=True)
+    content = models.TextField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["document", "chunk_index"], name="app_doc_chunk_idx"),
+        ]
+        ordering = ["chunk_index"]
+
+    def __str__(self):
+        return f"{self.document.filename} #{self.chunk_index}"
+
 class ChatConversations(models.Model):
     session = models.ForeignKey(
         ChatSession,

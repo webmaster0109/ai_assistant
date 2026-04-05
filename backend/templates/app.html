@@ -8,11 +8,27 @@
     <meta name="description" content="{{ website_description }}" />
     <meta name="author" content="Shrichand Thapa" />
     <meta name="theme-color" content="#17594a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="{{ website_name }}" />
+    <meta name="application-name" content="{{ website_name }}" />
+    <meta name="msapplication-TileColor" content="#17594a" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}" />
-    {% if website_favicon %}
-      <link rel="shortcut icon" href="{{ website_favicon }}" type="image/x-icon" />
-    {% endif %}
+    <link
+      rel="apple-touch-icon"
+      href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}"
+    />
+    <link
+      id="app-favicon"
+      rel="icon"
+      href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}"
+    />
+    <link
+      rel="shortcut icon"
+      href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}"
+      type="image/x-icon"
+    />
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"

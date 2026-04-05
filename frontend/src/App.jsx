@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
 import css from "highlight.js/lib/languages/css";
@@ -37,6 +37,7 @@ const initialBranding = {
     "A focused workspace for your private AI conversations.",
   website_favicon: rootElement?.dataset.siteFavicon || "",
 };
+const MAX_DOCUMENT_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 function getCsrfToken() {
   const cookie = document.cookie
@@ -61,6 +62,36 @@ async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
     credentials: "same-origin",
     ...options,
+    headers,
+  });
+
+  const contentType = response.headers.get("content-type") || "";
+  const payload = contentType.includes("application/json")
+    ? await response.json()
+    : null;
+
+  if (!response.ok) {
+    const error = new Error(payload?.detail || "Something went wrong.");
+    error.status = response.status;
+    throw error;
+  }
+
+  return payload;
+}
+
+async function apiFormRequest(path, formData, options = {}) {
+  const headers = new Headers(options.headers || {});
+  const method = (options.method || "POST").toUpperCase();
+
+  if (method !== "GET" && method !== "HEAD" && !headers.has("X-CSRFToken")) {
+    headers.set("X-CSRFToken", getCsrfToken());
+  }
+
+  const response = await fetch(path, {
+    credentials: "same-origin",
+    ...options,
+    method,
+    body: formData,
     headers,
   });
 
@@ -167,6 +198,24 @@ function upsertSession(list, session) {
   return sortSessions([session, ...deduped]);
 }
 
+function getSessionDocuments(session) {
+  if (!session) {
+    return [];
+  }
+
+  const documents = Array.isArray(session.documents) ? session.documents : [];
+  if (documents.length) {
+    return documents;
+  }
+
+  return session.document ? [session.document] : [];
+}
+
+function getActiveSessionDocument(session) {
+  const documents = getSessionDocuments(session);
+  return documents.find((document) => document.is_active) || session?.document || null;
+}
+
 function decodeHtmlEntities(value) {
   if (!value) {
     return "";
@@ -210,6 +259,14 @@ function normalizeAssistantSource(value) {
   }
 
   return convertHtmlCodeBlocksToFences(value)
+    .replace(/<\s*(strong|b)\s*>/gi, "**")
+    .replace(/<\s*\/\s*(strong|b)\s*>/gi, "**")
+    .replace(/<\s*(em|i)\s*>/gi, "*")
+    .replace(/<\s*\/\s*(em|i)\s*>/gi, "*")
+    .replace(/<\s*u\s*>/gi, "++")
+    .replace(/<\s*\/\s*u\s*>/gi, "++")
+    .replace(/<\s*code\s*>/gi, "`")
+    .replace(/<\s*\/\s*code\s*>/gi, "`")
     .replace(/<\s*br\s*\/?>/gi, "\n")
     .replace(/<\s*li[^>]*>/gi, "- ")
     .replace(/<\/\s*(p|div|li|ul|ol|h[1-6]|tr)\s*>/gi, "\n")
@@ -235,10 +292,6 @@ function sanitizeAssistantText(value) {
   return text
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/^\s*[-*]{3,}\s*$/gm, "")
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/\*(.*?)\*/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
     .replace(/^\s*[-*]\s+/gm, "• ")
     .replace(/^\s*(\d+\.)\s+/gm, "$1 ")
     .replace(/\r\n?/g, "\n")
@@ -289,6 +342,52 @@ function detectCodeLanguage(block) {
   return "";
 }
 
+function isMarkdownTableSeparator(line) {
+  return /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+(?:\s*:?-{3,}:?\s*)\|?\s*$/.test(String(line || ""));
+}
+
+function isMarkdownTableHeader(line) {
+  const trimmed = String(line || "").trim();
+  return trimmed.includes("|") && parseMarkdownTableRow(trimmed).length >= 2;
+}
+
+function parseMarkdownTableRow(line) {
+  const trimmed = String(line || "").trim();
+  const normalized = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  return normalized.split("|").map((cell) => sanitizeAssistantText(cell.trim()));
+}
+
+function parseMarkdownTableBlock(lines) {
+  const headers = parseMarkdownTableRow(lines[0] || "");
+  const rows = lines
+    .slice(2)
+    .map((line) => parseMarkdownTableRow(line))
+    .filter((cells) => cells.some(Boolean));
+
+  return {
+    type: "table",
+    headers,
+    rows,
+  };
+}
+
+function parseTextOrCodeBlock(block) {
+  const lines = block.split("\n");
+  const codeLineCount = lines.filter(isLikelyCodeLine).length;
+  const isCodeBlock = lines.length >= 3 && codeLineCount >= Math.max(2, Math.ceil(lines.length / 2));
+
+  if (isCodeBlock) {
+    return [{
+      type: "code",
+      language: detectCodeLanguage(block),
+      content: block,
+    }];
+  }
+
+  const text = sanitizeAssistantText(block);
+  return text ? [{ type: "text", content: text }] : [];
+}
+
 function parseLooseAssistantBlocks(value) {
   const normalized = normalizeAssistantSource(value)
     .replace(/\r\n?/g, "\n")
@@ -303,19 +402,41 @@ function parseLooseAssistantBlocks(value) {
 
   return blocks.flatMap((block) => {
     const lines = block.split("\n");
-    const codeLineCount = lines.filter(isLikelyCodeLine).length;
-    const isCodeBlock = lines.length >= 3 && codeLineCount >= Math.max(2, Math.ceil(lines.length / 2));
+    const segments = [];
+    let buffer = [];
 
-    if (isCodeBlock) {
-      return [{
-        type: "code",
-        language: detectCodeLanguage(block),
-        content: block,
-      }];
+    function flushBuffer() {
+      const buffered = buffer.join("\n").trim();
+      buffer = [];
+      if (!buffered) {
+        return;
+      }
+      segments.push(...parseTextOrCodeBlock(buffered));
     }
 
-    const text = sanitizeAssistantText(block);
-    return text ? [{ type: "text", content: text }] : [];
+    for (let index = 0; index < lines.length; index += 1) {
+      if (
+        index + 1 < lines.length
+        && isMarkdownTableHeader(lines[index])
+        && isMarkdownTableSeparator(lines[index + 1])
+      ) {
+        flushBuffer();
+        const tableLines = [lines[index], lines[index + 1]];
+        index += 2;
+        while (index < lines.length && lines[index].includes("|")) {
+          tableLines.push(lines[index]);
+          index += 1;
+        }
+        index -= 1;
+        segments.push(parseMarkdownTableBlock(tableLines));
+        continue;
+      }
+
+      buffer.push(lines[index]);
+    }
+
+    flushBuffer();
+    return segments;
   });
 }
 
@@ -450,6 +571,82 @@ function CodeBlock({ language, code }) {
   );
 }
 
+function renderInlineRichText(text) {
+  const source = String(text || "");
+  const tokens = [];
+  const pattern = /(\*\*[^*]+?\*\*|__[^_]+?__|\*[^*\n]+?\*|_[^_\n]+?_|\+\+[^+\n]+?\+\+|`[^`\n]+?`)/g;
+  let lastIndex = 0;
+  let match = pattern.exec(source);
+
+  while (match) {
+    if (match.index > lastIndex) {
+      tokens.push(source.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+    if ((token.startsWith("**") && token.endsWith("**")) || (token.startsWith("__") && token.endsWith("__"))) {
+      tokens.push(<strong key={`strong-${match.index}`}>{token.slice(2, -2)}</strong>);
+    } else if ((token.startsWith("*") && token.endsWith("*")) || (token.startsWith("_") && token.endsWith("_"))) {
+      tokens.push(<em key={`em-${match.index}`}>{token.slice(1, -1)}</em>);
+    } else if (token.startsWith("++") && token.endsWith("++")) {
+      tokens.push(<u key={`u-${match.index}`}>{token.slice(2, -2)}</u>);
+    } else if (token.startsWith("`") && token.endsWith("`")) {
+      tokens.push(<code className="message-inline-code" key={`code-${match.index}`}>{token.slice(1, -1)}</code>);
+    } else {
+      tokens.push(token);
+    }
+
+    lastIndex = pattern.lastIndex;
+    match = pattern.exec(source);
+  }
+
+  if (lastIndex < source.length) {
+    tokens.push(source.slice(lastIndex));
+  }
+
+  return tokens;
+}
+
+function RichTextBlock({ text }) {
+  const lines = String(text || "").split("\n");
+
+  return (
+    <div className="message-richtext">
+      {lines.map((line, index) => (
+        <Fragment key={`line-${index}`}>
+          {renderInlineRichText(line)}
+          {index < lines.length - 1 ? <br /> : null}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+function TableBlock({ headers, rows }) {
+  return (
+    <div className="message-table-wrap">
+      <table className="message-table">
+        <thead>
+          <tr>
+            {headers.map((header, index) => (
+              <th key={`head-${index}`}><RichTextBlock text={header} /></th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={`row-${rowIndex}`}>
+              {headers.map((_, cellIndex) => (
+                <td key={`cell-${rowIndex}-${cellIndex}`}><RichTextBlock text={row[cellIndex] || ""} /></td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function AssistantMessageContent({ value }) {
   const segments = useMemo(() => parseAssistantMessage(value), [value]);
 
@@ -462,9 +659,15 @@ function AssistantMessageContent({ value }) {
             language={segment.language}
             code={segment.content}
           />
+        ) : segment.type === "table" ? (
+          <TableBlock
+            key={`table-${index}`}
+            headers={segment.headers}
+            rows={segment.rows}
+          />
         ) : (
           <div className="message-body" key={`text-${index}`}>
-            {segment.content}
+            <RichTextBlock text={segment.content} />
           </div>
         ),
       )}
@@ -866,6 +1069,12 @@ function SessionList({
                   <span className="session-meta">
                     {session.model} • {formatTimestamp(session.updated_at)}
                   </span>
+                  {getActiveSessionDocument(session) ? (
+                    <span className="session-tag">
+                      <i className="bi bi-file-earmark-pdf" />
+                      {getActiveSessionDocument(session).name}
+                    </span>
+                  ) : null}
                   <span className="session-preview">{session.preview || "No messages yet."}</span>
                 </button>
                 <div className="session-actions">
@@ -1050,6 +1259,120 @@ function ProfilePage({ currentUser, usage, usageByModel, sessions, theme }) {
   );
 }
 
+function DocumentPanel({
+  activeSession,
+  selectedModel,
+  models,
+  uploading,
+  selectingDocumentId,
+  open,
+  onClose,
+  onUpload,
+  onSelectDocument,
+}) {
+  const fileInputRef = useRef(null);
+  const activeModelKey = activeSession?.model || selectedModel;
+  const activeModel = models.find((item) => item.key === activeModelKey) || null;
+  const canUploadToCurrent = !activeSession || Boolean(activeModel?.supports_documents);
+  const documents = getSessionDocuments(activeSession);
+  const activeDocument = getActiveSessionDocument(activeSession);
+
+  return (
+    <aside className={`document-panel ${open ? "is-open" : ""}`}>
+      <div className="document-panel-copy">
+        <div className="document-panel-head">
+          <div className="section-heading">
+            <span><i className="bi bi-file-earmark-pdf" /> Document chat</span>
+            <span>{documents.length ? `${documents.length} saved` : "PDF only"}</span>
+          </div>
+          <button
+            className="secondary-button icon-button document-panel-close"
+            type="button"
+            onClick={onClose}
+            aria-label="Close document panel"
+            title="Close document panel"
+          >
+            <i className="bi bi-x-lg" />
+          </button>
+        </div>
+        {activeDocument ? (
+          <div className="document-status">
+            <strong>{activeDocument.name}</strong>
+            <span>
+              {formatTokenCount(activeDocument.extracted_characters)} chars extracted • model locked to {activeSession.model}
+            </span>
+          </div>
+        ) : (
+          <div className="document-status muted">
+            <strong>{activeModel?.label || "Choose a model"}</strong>
+            <span>
+              {activeModel?.supports_documents
+                ? "This model can be used for PDF chat."
+                : "Choose a document-capable model before uploading a PDF."}
+            </span>
+          </div>
+        )}
+
+        {documents.length ? (
+          <div className="document-library">
+            <div className="section-heading">
+              <span>Saved PDFs</span>
+              <span>{documents.length}</span>
+            </div>
+            <div className="document-list">
+              {documents.map((document) => (
+                <button
+                  key={document.id}
+                  className={`document-item ${document.is_active ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => onSelectDocument(document.id)}
+                  disabled={uploading || selectingDocumentId === document.id}
+                >
+                  <span className="document-item-main">
+                    <strong>{document.name}</strong>
+                    <span>
+                      {formatTokenCount(document.extracted_characters)} chars extracted • {formatTimestamp(document.uploaded_at)}
+                    </span>
+                  </span>
+                  <span className="document-item-side">
+                    {selectingDocumentId === document.id ? (
+                      <i className="bi bi-arrow-repeat" />
+                    ) : document.is_active ? (
+                      <span className="document-item-badge">Selected</span>
+                    ) : (
+                      <span className="document-item-link">Use</span>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="document-panel-actions">
+        <input
+          ref={fileInputRef}
+          className="document-input"
+          type="file"
+          accept="application/pdf,.pdf"
+          onChange={onUpload}
+          disabled={uploading || !canUploadToCurrent}
+        />
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading || !canUploadToCurrent}
+        >
+          <i className={`bi ${uploading ? "bi-arrow-repeat" : "bi-upload"}`} />
+          {uploading ? "Uploading..." : documents.length ? "Add PDF" : "Upload PDF"}
+        </button>
+      </div>
+    </aside>
+  );
+}
+
 function ChatComposer({
   draft,
   model,
@@ -1057,9 +1380,12 @@ function ChatComposer({
   isLocked,
   sending,
   stoppingGeneration,
+  documentOpen,
+  documentAvailable,
   onDraftChange,
   onModelChange,
   onDraftKeyDown,
+  onToggleDocument,
   onSubmit,
   onStop,
 }) {
@@ -1094,6 +1420,16 @@ function ChatComposer({
             disabled={sending}
           />
         </div>
+        <button
+          className={`secondary-button composer-icon-button ${documentOpen ? "is-active" : ""}`}
+          type="button"
+          onClick={onToggleDocument}
+          disabled={!documentAvailable}
+          title="Open PDF panel"
+          aria-label="Open PDF panel"
+        >
+          <i className="bi bi-file-earmark-pdf" />
+        </button>
         <button
           className={`primary-button composer-button ${sending ? "stop-button" : ""}`}
           type={sending ? "button" : "submit"}
@@ -1334,6 +1670,10 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [sessionSearch, setSessionSearch] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [selectingDocumentId, setSelectingDocumentId] = useState(null);
+  const [documentPanelOpen, setDocumentPanelOpen] = useState(false);
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [stoppingGeneration, setStoppingGeneration] = useState(false);
   const [activeStreamId, setActiveStreamId] = useState("");
@@ -1355,6 +1695,10 @@ export default function App() {
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || null,
     [sessions, activeSessionId],
+  );
+  const documentCapableModels = useMemo(
+    () => models.filter((model) => model.supports_documents),
+    [models],
   );
   const pinnedCount = useMemo(
     () => sessions.filter((session) => session.is_pinned).length,
@@ -1400,6 +1744,10 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => () => abortStreamRequest(), []);
+
+  useEffect(() => {
+    setMobileActionsOpen(false);
+  }, [activeSessionId, currentPage, sidebarOpen, documentPanelOpen]);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) {
@@ -1512,6 +1860,8 @@ export default function App() {
     setUsageByModel([]);
     setDraft("");
     setSessionSearch("");
+    setUploadingDocument(false);
+    setDocumentPanelOpen(false);
     resetStreamingState();
     setRegeneratingMessageId(null);
     setPinningSessionId(null);
@@ -1605,6 +1955,7 @@ export default function App() {
         setActiveSessionId(payload.session.id);
         setSelectedModel(payload.session.model);
         setMessages(payload.messages || []);
+        setDocumentPanelOpen(false);
         clearEditState();
       });
     } catch (error) {
@@ -1652,6 +2003,7 @@ export default function App() {
     setSidebarOpen(false);
     setActiveSessionId(null);
     setMessages([]);
+    setDocumentPanelOpen(false);
     resetStreamingState();
     clearEditState();
     showToast("New chat", "Start a fresh private conversation.", "info");
@@ -1881,6 +2233,86 @@ export default function App() {
     }
   }
 
+  async function handleUploadDocument(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    if (file.size > MAX_DOCUMENT_UPLOAD_BYTES) {
+      showToast("PDF too large", "Only PDF files up to 10 MB can be uploaded.", "error");
+      return;
+    }
+
+    const modelKey = activeSession?.model || selectedModel;
+    const modelConfig = models.find((item) => item.key === modelKey);
+
+    if (!modelConfig?.supports_documents) {
+      showToast(
+        "Document model required",
+        "Start a new chat with a document-capable model before uploading a PDF.",
+        "error",
+      );
+      return;
+    }
+
+    setUploadingDocument(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("model", modelKey);
+      if (activeSessionId) {
+        formData.append("session_id", activeSessionId);
+      }
+
+      const payload = await apiFormRequest("/api/chat/documents/", formData);
+      setActiveSessionId(payload.session.id);
+      setSelectedModel(payload.session.model);
+      setSessions((current) => upsertSession(current, payload.session));
+      setDocumentPanelOpen(false);
+      if (!activeSessionId) {
+        setMessages([]);
+      }
+      showToast(
+        payload.reused ? "PDF already available" : "PDF ready",
+        payload.reused
+          ? `${payload.document.name} is already saved in this chat and has been selected.`
+          : `${payload.document.name} was added and selected for this chat.`,
+        "success",
+      );
+    } catch (error) {
+      showToast("Upload failed", error.message, "error");
+    } finally {
+      setUploadingDocument(false);
+    }
+  }
+
+  async function handleSelectDocument(documentId) {
+    if (!activeSessionId || !documentId || selectingDocumentId) {
+      return;
+    }
+
+    setSelectingDocumentId(documentId);
+    try {
+      const payload = await apiRequest(
+        `/api/chat/sessions/${activeSessionId}/documents/${documentId}/select/`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setSessions((current) => upsertSession(current, payload.session));
+      showToast("PDF selected", `${payload.document.name} is now active for this chat.`, "success");
+    } catch (error) {
+      showToast("Selection failed", error.message, "error");
+    } finally {
+      setSelectingDocumentId(null);
+    }
+  }
+
   function handleStartEdit(message) {
     if (!message?.id || sending || regeneratingMessageId || savingEditMessageId) {
       return;
@@ -2107,66 +2539,131 @@ export default function App() {
           />
 
           <main className="workspace">
+            {currentPage === "chat" && documentPanelOpen ? (
+              <button
+                className="document-panel-backdrop"
+                type="button"
+                onClick={() => setDocumentPanelOpen(false)}
+                aria-label="Close document panel"
+              />
+            ) : null}
             <header className="workspace-header">
-              <div className="workspace-heading">
-                <button
-                  className="secondary-button icon-button mobile-sidebar-toggle"
-                  type="button"
-                  onClick={() => setSidebarOpen((current) => !current)}
-                  aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-                  title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-                >
-                  <i className={`bi ${sidebarOpen ? "bi-x-lg" : "bi-list"}`} />
-                </button>
-                <div className="workspace-heading-copy">
+              <div className="workspace-topbar">
+                <div className="workspace-topline-left">
+                  <button
+                    className="secondary-button icon-button mobile-sidebar-toggle"
+                    type="button"
+                    onClick={() => setSidebarOpen((current) => !current)}
+                    aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+                    title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+                  >
+                    <i className={`bi ${sidebarOpen ? "bi-x-lg" : "bi-list"}`} />
+                  </button>
                   <p className="eyebrow">Authenticated workspace</p>
-                  <h1>{currentPage === "profile" ? "Profile" : activeSession?.title || "New conversation"}</h1>
-                  {currentPage === "profile" ? (
-                    <p className="workspace-subtitle">
-                      A separate page for this user’s account details and usage totals.
-                    </p>
+                </div>
+
+                <div className="workspace-actions">
+                  {currentPage === "chat" && activeSession ? (
+                    <>
+                      <button
+                        className={`secondary-button icon-button desktop-action ${activeSession.is_public ? "is-active" : ""}`}
+                        type="button"
+                        onClick={handleToggleShare}
+                        title={activeSession.is_public ? "Make chat private" : "Create public read-only link"}
+                        aria-label={activeSession.is_public ? "Make chat private" : "Create public read-only link"}
+                        disabled={Boolean(sharingSessionId)}
+                      >
+                        <i className={`bi ${sharingSessionId ? "bi-arrow-repeat" : activeSession.is_public ? "bi-globe2" : "bi-lock-fill"}`} />
+                      </button>
+                      <button
+                        className="secondary-button icon-button desktop-action"
+                        type="button"
+                        onClick={handleCopyShareLink}
+                        title="Copy share link"
+                        aria-label="Copy share link"
+                        disabled={!activeSession.is_public || !activeSession.share_url}
+                      >
+                        <i className="bi bi-link-45deg" />
+                      </button>
+                    </>
                   ) : null}
+                  <ThemeToggle
+                    theme={theme}
+                    onToggle={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+                  />
+                  <button
+                    className="secondary-button icon-button desktop-action"
+                    type="button"
+                    onClick={handleLogout}
+                    title="Logout"
+                    aria-label="Logout"
+                  >
+                    <i className="bi bi-power" />
+                  </button>
+                  <div className="mobile-actions-shell">
+                    <button
+                      className={`secondary-button icon-button mobile-settings-toggle ${mobileActionsOpen ? "is-active" : ""}`}
+                      type="button"
+                      onClick={() => setMobileActionsOpen((current) => !current)}
+                      title={mobileActionsOpen ? "Close quick actions" : "Open quick actions"}
+                      aria-label={mobileActionsOpen ? "Close quick actions" : "Open quick actions"}
+                    >
+                      <i className={`bi ${mobileActionsOpen ? "bi-x-lg" : "bi-gear"} `} />
+                    </button>
+                    <div className={`mobile-actions-menu ${mobileActionsOpen ? "is-open" : ""}`}>
+                      {currentPage === "chat" && activeSession ? (
+                        <>
+                          <button
+                            className={`secondary-button icon-button ${activeSession.is_public ? "is-active" : ""}`}
+                            type="button"
+                            onClick={async () => {
+                              await handleToggleShare();
+                              setMobileActionsOpen(false);
+                            }}
+                            title={activeSession.is_public ? "Make chat private" : "Create public read-only link"}
+                            aria-label={activeSession.is_public ? "Make chat private" : "Create public read-only link"}
+                            disabled={Boolean(sharingSessionId)}
+                          >
+                            <i className={`bi ${sharingSessionId ? "bi-arrow-repeat" : activeSession.is_public ? "bi-globe2" : "bi-lock-fill"}`} />
+                          </button>
+                          <button
+                            className="secondary-button icon-button"
+                            type="button"
+                            onClick={async () => {
+                              await handleCopyShareLink();
+                              setMobileActionsOpen(false);
+                            }}
+                            title="Copy share link"
+                            aria-label="Copy share link"
+                            disabled={!activeSession.is_public || !activeSession.share_url}
+                          >
+                            <i className="bi bi-link-45deg" />
+                          </button>
+                        </>
+                      ) : null}
+                      <button
+                        className="secondary-button icon-button"
+                        type="button"
+                        onClick={async () => {
+                          await handleLogout();
+                          setMobileActionsOpen(false);
+                        }}
+                        title="Logout"
+                        aria-label="Logout"
+                      >
+                        <i className="bi bi-power" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              <div className="workspace-actions">
-                {currentPage === "chat" && activeSession ? (
-                  <>
-                    <button
-                      className={`secondary-button icon-button ${activeSession.is_public ? "is-active" : ""}`}
-                      type="button"
-                      onClick={handleToggleShare}
-                      title={activeSession.is_public ? "Make chat private" : "Create public read-only link"}
-                      aria-label={activeSession.is_public ? "Make chat private" : "Create public read-only link"}
-                      disabled={Boolean(sharingSessionId)}
-                    >
-                      <i className={`bi ${sharingSessionId ? "bi-arrow-repeat" : activeSession.is_public ? "bi-globe2" : "bi-lock-fill"}`} />
-                    </button>
-                    <button
-                      className="secondary-button icon-button"
-                      type="button"
-                      onClick={handleCopyShareLink}
-                      title="Copy share link"
-                      aria-label="Copy share link"
-                      disabled={!activeSession.is_public || !activeSession.share_url}
-                    >
-                      <i className="bi bi-link-45deg" />
-                    </button>
-                  </>
+              <div className="workspace-heading-copy">
+                <h1>{currentPage === "profile" ? "Profile" : activeSession?.title || "New conversation"}</h1>
+                {currentPage === "profile" ? (
+                  <p className="workspace-subtitle">
+                    A separate page for this user’s account details and usage totals.
+                  </p>
                 ) : null}
-                <ThemeToggle
-                  theme={theme}
-                  onToggle={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-                />
-                <button
-                  className="secondary-button icon-button"
-                  type="button"
-                  onClick={handleLogout}
-                  title="Logout"
-                  aria-label="Logout"
-                >
-                  <i className="bi bi-power" />
-                </button>
               </div>
             </header>
 
@@ -2200,11 +2697,25 @@ export default function App() {
                   isLocked={Boolean(activeSession)}
                   sending={sending}
                   stoppingGeneration={stoppingGeneration}
+                  documentOpen={documentPanelOpen}
+                  documentAvailable={Boolean(getSessionDocuments(activeSession).length || models.length)}
                   onDraftChange={(event) => setDraft(event.target.value)}
                   onDraftKeyDown={handleDraftKeyDown}
                   onModelChange={(event) => setSelectedModel(event.target.value)}
+                  onToggleDocument={() => setDocumentPanelOpen((current) => !current)}
                   onSubmit={handleSendMessage}
                   onStop={handleStopGeneration}
+                />
+                <DocumentPanel
+                  activeSession={activeSession}
+                  selectedModel={selectedModel}
+                  models={models}
+                  uploading={uploadingDocument}
+                  selectingDocumentId={selectingDocumentId}
+                  open={documentPanelOpen}
+                  onClose={() => setDocumentPanelOpen(false)}
+                  onUpload={handleUploadDocument}
+                  onSelectDocument={handleSelectDocument}
                 />
               </>
             )}
