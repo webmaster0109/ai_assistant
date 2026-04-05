@@ -4,7 +4,7 @@ import hashlib
 from functools import wraps
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
-from django.http import HttpResponseRedirect, JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.template.loader import render_to_string
 from django.templatetags.static import static
@@ -17,13 +17,21 @@ from .langchain import (
     clear_stream_stop,
     conversation_chain,
     conversation_chain_stream,
+    generate_learning_path,
+    generate_quiz_questions,
     generate_title,
     load_regeneration_history,
     request_stream_stop,
     set_session_history,
 )
 from .documents import extract_pdf_chunks, replace_document_chunks
-from .models import ChatConversations, ChatDocument, ChatSession
+from .models import (
+    ChatConversations,
+    ChatDocument,
+    ChatSession,
+    LearningQuizQuestion,
+    LearningQuizSession,
+)
 from .ollama import list_models, supports_documents
 from .utils import cloud_usage_by_model, cloud_usage_stats, get_website_branding
 
@@ -161,6 +169,55 @@ def serialize_message(message):
         "output_tokens": message.output_tokens,
         "created_at": message.created_at.isoformat(),
     }
+
+
+def serialize_learning_quiz_question(question):
+    revealed = bool(question.selected_option)
+    return {
+        "id": question.id,
+        "sort_order": question.sort_order,
+        "question_text": question.question_text,
+        "options": {
+            "A": question.option_a,
+            "B": question.option_b,
+            "C": question.option_c,
+            "D": question.option_d,
+        },
+        "selected_option": question.selected_option or "",
+        "is_correct": question.is_correct,
+        "correct_option": question.correct_option if revealed else "",
+        "explanation": question.explanation if revealed else "",
+    }
+
+
+def serialize_learning_quiz_session(quiz, include_questions=False):
+    questions = list(getattr(quiz, "_prefetched_objects_cache", {}).get("questions", []))
+    if not questions and include_questions:
+        questions = list(quiz.questions.all())
+
+    answered_questions = (
+        sum(1 for item in questions if item.selected_option)
+        if questions
+        else quiz.questions.exclude(selected_option="").count()
+    )
+    total_questions = quiz.total_questions or len(questions)
+    score_percent = round((quiz.correct_answers / total_questions) * 100) if total_questions else 0
+
+    payload = {
+        "id": quiz.id,
+        "topic": quiz.topic,
+        "model": quiz.model,
+        "total_questions": total_questions,
+        "answered_questions": answered_questions,
+        "correct_answers": quiz.correct_answers,
+        "score_percent": score_percent,
+        "is_completed": bool(quiz.completed_at),
+        "created_at": quiz.created_at.isoformat(),
+        "completed_at": quiz.completed_at.isoformat() if quiz.completed_at else None,
+    }
+    if include_questions:
+        payload["questions"] = [serialize_learning_quiz_question(question) for question in questions]
+    return payload
 
 
 def get_owned_session_or_404(request, session_id):
@@ -316,6 +373,212 @@ def logout_user(request):
 @require_GET
 def models_catalog(request):
     return JsonResponse({"models": list_models()}, status=200)
+
+
+@login_required_json
+@require_GET
+def learning_quiz_sessions(request):
+    quizzes = (
+        LearningQuizSession.objects.filter(owner=request.user)
+        .prefetch_related("questions")
+        .order_by("-created_at")[:12]
+    )
+    return JsonResponse(
+        {"quizzes": [serialize_learning_quiz_session(quiz, include_questions=True) for quiz in quizzes]},
+        status=200,
+    )
+
+
+@login_required_json
+@require_GET
+def learning_quiz_detail(request, quiz_id):
+    quiz = (
+        LearningQuizSession.objects.filter(owner=request.user, id=quiz_id)
+        .prefetch_related("questions")
+        .first()
+    )
+    if quiz is None:
+        return json_error("Quiz not found.", status=404)
+
+    return JsonResponse(
+        {"quiz": serialize_learning_quiz_session(quiz, include_questions=True)},
+        status=200,
+    )
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def create_learning_quiz(request):
+    payload = parse_request_data(request)
+    topic = (payload.get("topic") or "").strip()
+    model = (payload.get("model") or "").strip()
+    question_count = payload.get("question_count") or 5
+
+    try:
+        question_count = int(question_count)
+    except (TypeError, ValueError):
+        return json_error("Question count must be a number.")
+
+    question_count = max(3, min(question_count, 10))
+
+    if not topic:
+        return json_error("Quiz topic is required.")
+
+    available_keys = {item["key"] for item in list_models()}
+    if model not in available_keys:
+        return json_error("Please choose a valid model.")
+
+    previous_questions = list(
+        LearningQuizQuestion.objects.filter(
+            quiz_session__owner=request.user,
+            quiz_session__topic__iexact=topic,
+        )
+        .order_by("-id")
+        .values_list("question_text", flat=True)[:40]
+    )
+
+    try:
+        generated_questions = generate_quiz_questions(
+            model,
+            topic,
+            question_count=question_count,
+            previous_questions=previous_questions,
+        )
+    except ValueError as error:
+        return json_error(str(error))
+    except Exception:
+        return json_error("Unable to generate quiz right now. Please try again.")
+
+    quiz = LearningQuizSession.objects.create(
+        owner=request.user,
+        topic=topic,
+        model=model,
+        total_questions=len(generated_questions),
+    )
+    LearningQuizQuestion.objects.bulk_create(
+        [
+            LearningQuizQuestion(
+                quiz_session=quiz,
+                question_text=item["question_text"],
+                option_a=item["option_a"],
+                option_b=item["option_b"],
+                option_c=item["option_c"],
+                option_d=item["option_d"],
+                correct_option=item["correct_option"],
+                explanation=item["explanation"],
+                sort_order=item["sort_order"],
+            )
+            for item in generated_questions
+        ]
+    )
+
+    quiz = LearningQuizSession.objects.prefetch_related("questions").get(id=quiz.id)
+    return JsonResponse({"quiz": serialize_learning_quiz_session(quiz, include_questions=True)}, status=201)
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def answer_learning_quiz_question(request, quiz_id, question_id):
+    quiz = (
+        LearningQuizSession.objects.filter(owner=request.user, id=quiz_id)
+        .prefetch_related("questions")
+        .first()
+    )
+    if quiz is None:
+        return json_error("Quiz not found.", status=404)
+
+    question = next((item for item in quiz.questions.all() if item.id == question_id), None)
+    if question is None:
+        return json_error("Quiz question not found.", status=404)
+    if quiz.completed_at:
+        return json_error("This quiz is already completed.")
+    if question.selected_option:
+        return json_error("This question has already been answered.")
+
+    payload = parse_request_data(request)
+    selected_option = (payload.get("selected_option") or "").strip().upper()
+    if selected_option not in {"A", "B", "C", "D"}:
+        return json_error("Please choose a valid option.")
+
+    question.selected_option = selected_option
+    question.is_correct = selected_option == question.correct_option
+    question.answered_at = timezone.now()
+    question.save(update_fields=["selected_option", "is_correct", "answered_at"])
+
+    answered_questions = 0
+    correct_answers = 0
+    for item in quiz.questions.all():
+        if item.id == question.id:
+            current = question
+        else:
+            current = item
+        if current.selected_option:
+            answered_questions += 1
+        if current.is_correct:
+            correct_answers += 1
+
+    quiz.correct_answers = correct_answers
+    if answered_questions >= quiz.total_questions:
+        quiz.completed_at = timezone.now()
+        quiz.save(update_fields=["correct_answers", "completed_at", "updated_at"])
+    else:
+        quiz.save(update_fields=["correct_answers", "updated_at"])
+
+    quiz = LearningQuizSession.objects.prefetch_related("questions").get(id=quiz.id)
+    return JsonResponse(
+        {
+            "quiz": serialize_learning_quiz_session(quiz, include_questions=True),
+            "question": serialize_learning_quiz_question(
+                next(item for item in quiz.questions.all() if item.id == question.id)
+            ),
+        },
+        status=200,
+    )
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def create_learning_path(request):
+    payload = parse_request_data(request)
+    goal = (payload.get("goal") or "").strip()
+    model = (payload.get("model") or "").strip()
+    experience_level = (payload.get("experience_level") or "").strip()
+    weekly_hours = (payload.get("weekly_hours") or "").strip()
+    timeline = (payload.get("timeline") or "").strip()
+
+    if not goal:
+        return json_error("Learning goal is required.")
+
+    available_keys = {item["key"] for item in list_models()}
+    if model not in available_keys:
+        return json_error("Please choose a valid model.")
+
+    try:
+        roadmap = generate_learning_path(
+            model,
+            goal,
+            experience_level,
+            weekly_hours,
+            timeline,
+        )
+    except ValueError as error:
+        return json_error(str(error))
+    except Exception:
+        return json_error("Unable to generate a learning path right now. Please try again.")
+
+    return JsonResponse(
+        {
+            "path": roadmap,
+            "meta": {
+                "goal": goal,
+                "model": model,
+                "experience_level": experience_level,
+                "weekly_hours": weekly_hours,
+                "timeline": timeline,
+            },
+        },
+        status=200,
+    )
 
 
 @login_required_json
@@ -864,6 +1127,11 @@ __all__ = [
     "login_user",
     "logout_user",
     "models_catalog",
+    "learning_quiz_sessions",
+    "learning_quiz_detail",
+    "create_learning_quiz",
+    "answer_learning_quiz_question",
+    "create_learning_path",
     "chat_post",
     "upload_chat_document",
     "select_chat_document",

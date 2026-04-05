@@ -1,11 +1,19 @@
 import json
+from datetime import datetime
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils import timezone
 
-from .models import ChatConversations, ChatDocument, ChatSession
+from .models import (
+    ChatConversations,
+    ChatDocument,
+    ChatSession,
+    LearningQuizQuestion,
+    LearningQuizSession,
+)
 
 
 User = get_user_model()
@@ -106,6 +114,59 @@ class ChatPrivacyTests(TestCase):
         self.assertEqual(payload["total_input_tokens"], 12)
         self.assertEqual(payload["total_output_tokens"], 34)
         self.assertEqual(payload["total_tokens"], 46)
+        self.assertEqual(payload["dashboard"]["total_messages"], 1)
+        self.assertEqual(payload["dashboard"]["favorite_model"], "glm-5")
+        self.assertEqual(payload["dashboard"]["favorite_model_messages"], 1)
+
+    def test_usage_stats_include_dashboard_profile_metrics(self):
+        first_message = self.session.conversations.first()
+        first_message.created_at = timezone.make_aware(
+            datetime(2026, 4, 5, 9, 15),
+            timezone.get_current_timezone(),
+        )
+        first_message.save(update_fields=["created_at"])
+
+        second_session = ChatSession.objects.create(
+            owner=self.owner,
+            model="deepseek-v3.2",
+            title="Later chat",
+        )
+        second_message = ChatConversations.objects.create(
+            session=second_session,
+            user_message="Another question",
+            ai_message="Another answer",
+            input_tokens=20,
+            output_tokens=30,
+        )
+        second_message.created_at = timezone.make_aware(
+            datetime(2026, 4, 5, 21, 5),
+            timezone.get_current_timezone(),
+        )
+        second_message.save(update_fields=["created_at"])
+
+        third_message = ChatConversations.objects.create(
+            session=second_session,
+            user_message="Late follow-up",
+            ai_message="Late answer",
+            input_tokens=8,
+            output_tokens=12,
+        )
+        third_message.created_at = timezone.make_aware(
+            datetime(2026, 4, 5, 21, 45),
+            timezone.get_current_timezone(),
+        )
+        third_message.save(update_fields=["created_at"])
+
+        self.client.force_login(self.owner)
+        response = self.client.get("/api/usage-stats/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["dashboard"]["total_messages"], 3)
+        self.assertEqual(payload["dashboard"]["favorite_model"], "deepseek-v3.2")
+        self.assertEqual(payload["dashboard"]["favorite_model_messages"], 2)
+        self.assertEqual(payload["dashboard"]["most_active_time"], "09 PM - 10 PM")
+        self.assertEqual(payload["dashboard"]["most_active_time_messages"], 2)
 
     @patch("app.views.conversation_chain", return_value=("Regenerated answer", {"input_tokens": 7, "output_tokens": 9}))
     def test_regenerate_replaces_existing_ai_reply(self, mocked_chain):
@@ -271,6 +332,148 @@ class ChatPrivacyTests(TestCase):
         model_names = {item["model"] for item in payload["models"]}
         self.assertIn("glm-5", model_names)
         self.assertIn("deepseek-v3.2", model_names)
+
+    @patch(
+        "app.views.generate_quiz_questions",
+        return_value=[
+            {
+                "question_text": "Which QuerySet method fetches one object by primary key?",
+                "option_a": "filter()",
+                "option_b": "get()",
+                "option_c": "all()",
+                "option_d": "values()",
+                "correct_option": "B",
+                "explanation": "get() fetches a single matching object.",
+                "sort_order": 1,
+            },
+            {
+                "question_text": "Which method returns SQL-ready rows as dictionaries?",
+                "option_a": "values()",
+                "option_b": "select_related()",
+                "option_c": "prefetch_related()",
+                "option_d": "first()",
+                "correct_option": "A",
+                "explanation": "values() returns dictionaries of selected fields.",
+                "sort_order": 2,
+            },
+            {
+                "question_text": "Which clause sorts descending?",
+                "option_a": "order_by('name')",
+                "option_b": "order_by('-name')",
+                "option_c": "sort_by('-name')",
+                "option_d": "arrange('-name')",
+                "correct_option": "B",
+                "explanation": "Prefixing with a minus sorts descending.",
+                "sort_order": 3,
+            },
+        ],
+    )
+    def test_learning_quiz_creation_and_scoring(self, mocked_generate_quiz):
+        self.client.force_login(self.owner)
+
+        create_response = self.client.post(
+            "/api/learning/quizzes/create/",
+            data=json.dumps({
+                "topic": "Django ORM",
+                "model": "glm-5",
+                "question_count": 3,
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(create_response.status_code, 201)
+        payload = create_response.json()
+        quiz_id = payload["quiz"]["id"]
+        self.assertEqual(payload["quiz"]["topic"], "Django ORM")
+        self.assertEqual(len(payload["quiz"]["questions"]), 3)
+        mocked_generate_quiz.assert_called_once()
+
+        first_question_id = payload["quiz"]["questions"][0]["id"]
+        answer_response = self.client.post(
+            f"/api/learning/quizzes/{quiz_id}/questions/{first_question_id}/answer/",
+            data=json.dumps({"selected_option": "B"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(answer_response.status_code, 200)
+        answer_payload = answer_response.json()
+        self.assertEqual(answer_payload["question"]["selected_option"], "B")
+        self.assertTrue(answer_payload["question"]["is_correct"])
+        self.assertEqual(answer_payload["question"]["correct_option"], "B")
+        self.assertEqual(answer_payload["quiz"]["correct_answers"], 1)
+        self.assertEqual(answer_payload["quiz"]["answered_questions"], 1)
+        self.assertFalse(answer_payload["quiz"]["is_completed"])
+
+    def test_learning_quiz_detail_returns_questions_for_owner(self):
+        self.client.force_login(self.owner)
+        quiz = LearningQuizSession.objects.create(
+            owner=self.owner,
+            topic="Django ORM",
+            model="glm-5",
+            total_questions=2,
+        )
+        LearningQuizQuestion.objects.create(
+            quiz_session=quiz,
+            question_text="What does get() return?",
+            option_a="A queryset",
+            option_b="One object",
+            option_c="A serializer",
+            option_d="A template",
+            correct_option="B",
+            explanation="get() returns one matching object.",
+            sort_order=1,
+        )
+
+        response = self.client.get(f"/api/learning/quizzes/{quiz.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["quiz"]["topic"], "Django ORM")
+        self.assertEqual(len(payload["quiz"]["questions"]), 1)
+        self.assertEqual(payload["quiz"]["questions"][0]["question_text"], "What does get() return?")
+
+    @patch(
+        "app.views.generate_learning_path",
+        return_value={
+            "title": "Machine Learning Roadmap",
+            "summary": "A practical ML path for consistent weekly progress.",
+            "first_steps": ["Revise Python basics", "Set up notebooks", "Review linear algebra"],
+            "milestones": [
+                {
+                    "title": "Foundations",
+                    "duration": "2 weeks",
+                    "focus": "Python, statistics, data handling",
+                    "deliverable": "Mini data analysis notebook",
+                },
+                {
+                    "title": "Core ML",
+                    "duration": "4 weeks",
+                    "focus": "Regression, classification, evaluation",
+                    "deliverable": "Two end-to-end ML projects",
+                },
+            ],
+        },
+    )
+    def test_learning_path_generation_returns_structured_payload(self, mocked_generate_path):
+        self.client.force_login(self.owner)
+
+        response = self.client.post(
+            "/api/learning/path/",
+            data=json.dumps({
+                "goal": "I want to learn machine learning",
+                "model": "glm-5",
+                "experience_level": "Beginner",
+                "weekly_hours": "8",
+                "timeline": "3 months",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["path"]["title"], "Machine Learning Roadmap")
+        self.assertEqual(len(payload["path"]["milestones"]), 2)
+        mocked_generate_path.assert_called_once()
 
     @patch("app.views.extract_pdf_chunks", return_value=[
         {"page_number": 1, "content": "Django request lifecycle details."},

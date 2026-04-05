@@ -1006,7 +1006,7 @@ function BrandIdentity({ branding, subtitle, compact = false }) {
   );
 }
 
-function SidebarNav({ currentPage, onOpenChats, onOpenProfile }) {
+function SidebarNav({ currentPage, onOpenChats, onOpenProfile, onOpenLearn }) {
   return (
     <div className="sidebar-nav">
       <button
@@ -1024,6 +1024,14 @@ function SidebarNav({ currentPage, onOpenChats, onOpenProfile }) {
       >
         <i className="bi bi-person-circle" />
         Profile
+      </button>
+      <button
+        className={`nav-chip ${currentPage === "learn" ? "active" : ""}`}
+        type="button"
+        onClick={onOpenLearn}
+      >
+        <i className="bi bi-mortarboard" />
+        Learn
       </button>
     </div>
   );
@@ -1225,6 +1233,7 @@ function SessionList({
   onClose,
   onOpenChats,
   onOpenProfile,
+  onOpenLearn,
   onSearchChange,
   onSelect,
   onTogglePin,
@@ -1262,6 +1271,7 @@ function SessionList({
           currentPage={currentPage}
           onOpenChats={onOpenChats}
           onOpenProfile={onOpenProfile}
+          onOpenLearn={onOpenLearn}
         />
         <label className="sidebar-search">
           <i className="bi bi-search" />
@@ -1465,6 +1475,48 @@ function UsageCard({ usage, usageByModel, theme }) {
   );
 }
 
+function ProfileStatsDashboard({ usage }) {
+  const dashboard = usage?.dashboard || {};
+  const cards = [
+    {
+      label: "Total messages",
+      value: String(dashboard.total_messages || 0),
+      note: "Every private user prompt and AI reply saved in this account.",
+      icon: "bi-chat-square-text",
+    },
+    {
+      label: "Favorite model",
+      value: dashboard.favorite_model || "No activity yet",
+      note:
+        dashboard.favorite_model_messages > 0
+          ? `${dashboard.favorite_model_messages} messages with this model so far.`
+          : "Your most-used model will appear here after activity.",
+      icon: "bi-cpu",
+    },
+    {
+      label: "Most active time",
+      value: dashboard.most_active_time || "No activity yet",
+      note:
+        dashboard.most_active_time_messages > 0
+          ? `${dashboard.most_active_time_messages} messages usually land in this time window.`
+          : "A peak activity window appears after your chats build up.",
+      icon: "bi-clock-history",
+    },
+  ];
+
+  return (
+    <section className="profile-stats-grid">
+      {cards.map((card) => (
+        <article key={card.label} className="profile-card profile-stat-card">
+          <span className="overview-label"><i className={`bi ${card.icon}`} /> {card.label}</span>
+          <strong className="overview-value profile-value profile-stat-value">{card.value}</strong>
+          <p className="small-note">{card.note}</p>
+        </article>
+      ))}
+    </section>
+  );
+}
+
 function ProfilePage({ currentUser, usage, usageByModel, sessions, theme }) {
   return (
     <div className="profile-page">
@@ -1493,7 +1545,457 @@ function ProfilePage({ currentUser, usage, usageByModel, sessions, theme }) {
         </article>
       </section>
 
+      <ProfileStatsDashboard usage={usage} />
+
       <UsageCard usage={usage} usageByModel={usageByModel} theme={theme} />
+    </div>
+  );
+}
+
+function upsertQuizHistory(list, quiz) {
+  const deduped = list.filter((item) => item.id !== quiz.id);
+  return [quiz, ...deduped].sort(
+    (left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
+  );
+}
+
+function QuizModeCard({
+  models,
+  topic,
+  model,
+  questionCount,
+  loading,
+  activeQuiz,
+  quizHistory,
+  onTopicChange,
+  onModelChange,
+  onQuestionCountChange,
+  onStartQuiz,
+  onOpenQuiz,
+}) {
+  const isQuizCompleted = Boolean(activeQuiz?.is_completed);
+  const activeQuizLabel = !activeQuiz
+    ? "MCQ"
+    : isQuizCompleted
+      ? `${activeQuiz.correct_answers}/${activeQuiz.total_questions}`
+      : "Continue";
+
+  return (
+    <section className="learn-card">
+      <div className="section-heading">
+        <span><i className="bi bi-patch-question" /> Quiz mode</span>
+        <span>{activeQuizLabel}</span>
+      </div>
+      <p className="small-note">
+        Ask the AI to test you on a topic with multiple-choice questions and tracked scoring.
+      </p>
+
+      <form className="learn-form" onSubmit={onStartQuiz}>
+        <label>
+          <span>Topic</span>
+          <input
+            type="text"
+            value={topic}
+            onChange={onTopicChange}
+            placeholder="Django ORM"
+            required
+          />
+        </label>
+        <div className="learn-form-row">
+          <label className="learn-form-field">
+            <span>Model</span>
+            <select value={model} onChange={onModelChange}>
+              {models.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="learn-form-field">
+            <span>Questions</span>
+            <select value={questionCount} onChange={onQuestionCountChange}>
+              {[5, 7, 10].map((count) => (
+                <option key={count} value={String(count)}>
+                  {count}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <button className="primary-button" type="submit" disabled={loading}>
+          <i className={`bi ${loading ? "bi-arrow-repeat" : "bi-stars"}`} />
+          {loading ? "Building quiz..." : "Generate quiz"}
+        </button>
+      </form>
+
+      {activeQuiz ? (
+        <div className="quiz-stage">
+          <div className="quiz-summary-strip">
+            <article>
+              <span>Topic</span>
+              <strong>{activeQuiz.topic}</strong>
+            </article>
+            <article>
+              <span>Progress</span>
+              <strong>{activeQuiz.answered_questions}/{activeQuiz.total_questions}</strong>
+            </article>
+            <article>
+              <span>{isQuizCompleted ? "Score" : "Status"}</span>
+              <strong>{isQuizCompleted ? `${activeQuiz.score_percent}%` : "Continue"}</strong>
+            </article>
+          </div>
+          {!isQuizCompleted ? (
+            <button className="primary-button quiz-launch-button" type="button" onClick={() => onOpenQuiz(activeQuiz)}>
+              <i className="bi bi-play-circle" />
+              {activeQuiz.answered_questions > 0 ? "Continue quiz" : "Start quiz"}
+            </button>
+          ) : (
+            <div className="quiz-feedback is-finished quiz-result-card">
+              <strong>Quiz completed</strong>
+              <p>
+                You finished this quiz with {activeQuiz.correct_answers} correct answers out of{" "}
+                {activeQuiz.total_questions}.
+              </p>
+              <button className="secondary-button" type="button" onClick={() => onOpenQuiz(activeQuiz)}>
+                <i className="bi bi-journal-text" />
+                Review answers
+              </button>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      <div className="learn-history">
+        <div className="section-heading">
+          <span><i className="bi bi-clock-history" /> Recent quizzes</span>
+          <span>{quizHistory.length}</span>
+        </div>
+        {quizHistory.length ? (
+          <div className="quiz-history-list">
+            {quizHistory.map((quiz) => (
+              <article key={quiz.id} className="quiz-history-item">
+                <div>
+                  <strong>{quiz.topic}</strong>
+                  <span>{quiz.model} • {formatTimestamp(quiz.created_at)}</span>
+                </div>
+                <div className="quiz-history-score">
+                  <strong>{quiz.is_completed ? `${quiz.score_percent}%` : "Continue"}</strong>
+                  <span>{quiz.is_completed ? `${quiz.correct_answers}/${quiz.total_questions}` : `${quiz.answered_questions}/${quiz.total_questions}`}</span>
+                </div>
+                <button className="secondary-button quiz-history-action" type="button" onClick={() => onOpenQuiz(quiz)}>
+                  <i className={`bi ${quiz.is_completed ? "bi-journal-check" : "bi-play-circle"}`} />
+                  {quiz.is_completed ? "Review" : "Continue"}
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="small-note">Quiz history will show up here after your first attempt.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function QuizModal({
+  quiz,
+  focusQuestionId,
+  answeringQuestionId,
+  open,
+  onClose,
+  onAnswer,
+  onContinue,
+  onPrevious,
+}) {
+  if (!open || !quiz) {
+    return null;
+  }
+
+  const questions = quiz.questions || [];
+  const currentQuestion = questions.find((item) => item.id === focusQuestionId)
+    || questions.find((item) => !item.selected_option)
+    || questions[questions.length - 1]
+    || null;
+  const nextUnansweredQuestion = questions.find((item) => !item.selected_option) || null;
+  const showingAnsweredQuestion = Boolean(currentQuestion?.selected_option);
+
+  return (
+    <>
+      <button
+        className="quiz-modal-backdrop"
+        type="button"
+        onClick={onClose}
+        aria-label="Close quiz"
+      />
+      <div className="quiz-modal" role="dialog" aria-modal="true" aria-label="Quiz mode">
+        <div className="quiz-modal-head">
+          <div className="section-heading">
+            <span><i className="bi bi-patch-question" /> {quiz.topic}</span>
+            <span>{quiz.answered_questions}/{quiz.total_questions}</span>
+          </div>
+          <button
+            className="secondary-button icon-button"
+            type="button"
+            onClick={onClose}
+            aria-label="Close quiz"
+            title="Close quiz"
+          >
+            <i className="bi bi-x-lg" />
+          </button>
+        </div>
+
+        <div className="quiz-summary-strip">
+          <article>
+            <span>Topic</span>
+            <strong>{quiz.topic}</strong>
+          </article>
+          <article>
+            <span>Progress</span>
+            <strong>{quiz.answered_questions}/{quiz.total_questions}</strong>
+          </article>
+          <article>
+            <span>{quiz.is_completed ? "Score" : "Status"}</span>
+            <strong>{quiz.is_completed ? `${quiz.score_percent}%` : "In progress"}</strong>
+          </article>
+        </div>
+
+        {currentQuestion ? (
+          <div className="quiz-question-card quiz-question-card-modal">
+            <span className="overview-label">Question {currentQuestion.sort_order}</span>
+            <h3>{currentQuestion.question_text}</h3>
+            <div className="quiz-options">
+              {Object.entries(currentQuestion.options || {}).map(([key, label]) => {
+                const isSelected = currentQuestion.selected_option === key;
+                const isCorrect = currentQuestion.correct_option === key;
+                return (
+                  <button
+                    key={key}
+                    className={`quiz-option ${isSelected ? "is-selected" : ""} ${showingAnsweredQuestion && isCorrect ? "is-correct" : ""} ${showingAnsweredQuestion && isSelected && !isCorrect ? "is-wrong" : ""}`}
+                    type="button"
+                    disabled={Boolean(answeringQuestionId || currentQuestion.selected_option || quiz.is_completed)}
+                    onClick={() => onAnswer(currentQuestion, key)}
+                  >
+                    <span>{key}</span>
+                    <strong>{label}</strong>
+                  </button>
+                );
+              })}
+            </div>
+            {showingAnsweredQuestion ? (
+              <div className={`quiz-feedback ${currentQuestion.is_correct ? "is-correct" : "is-wrong"}`}>
+                <strong>
+                  {currentQuestion.is_correct
+                    ? "Correct answer"
+                    : `Correct answer: ${currentQuestion.correct_option}`}
+                </strong>
+                <p>{currentQuestion.explanation}</p>
+                <div className="quiz-feedback-actions">
+                  {currentQuestion.sort_order > 1 ? (
+                    <button className="secondary-button" type="button" onClick={onPrevious}>
+                      <i className="bi bi-arrow-left" />
+                      Previous
+                    </button>
+                  ) : null}
+                  {((quiz.is_completed && currentQuestion.sort_order < questions.length)
+                    || (!quiz.is_completed && nextUnansweredQuestion && nextUnansweredQuestion.id !== currentQuestion.id)) ? (
+                    <button className="secondary-button" type="button" onClick={onContinue}>
+                      <i className="bi bi-arrow-right" />
+                      Next question
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function LearningPathCard({
+  models,
+  form,
+  loading,
+  result,
+  onFormChange,
+  onSubmit,
+}) {
+  return (
+    <section className="learn-card">
+      <div className="section-heading">
+        <span><i className="bi bi-signpost-split" /> Learning path</span>
+        <span>{result?.milestones?.length || "Roadmap"}</span>
+      </div>
+      <p className="small-note">
+        Turn a learning goal into a structured roadmap with milestones, focus areas, and deliverables.
+      </p>
+
+      <form className="learn-form" onSubmit={onSubmit}>
+        <label>
+          <span>Goal</span>
+          <input
+            type="text"
+            name="goal"
+            value={form.goal}
+            onChange={onFormChange}
+            placeholder="I want to learn machine learning"
+            required
+          />
+        </label>
+        <div className="learn-form-row">
+          <label className="learn-form-field">
+            <span>Level</span>
+            <input
+              type="text"
+              name="experience_level"
+              value={form.experience_level}
+              onChange={onFormChange}
+              placeholder="Beginner"
+            />
+          </label>
+          <label className="learn-form-field">
+            <span>Hours / week</span>
+            <input
+              type="text"
+              name="weekly_hours"
+              value={form.weekly_hours}
+              onChange={onFormChange}
+              placeholder="8"
+            />
+          </label>
+        </div>
+        <div className="learn-form-row">
+          <label className="learn-form-field">
+            <span>Timeline</span>
+            <input
+              type="text"
+              name="timeline"
+              value={form.timeline}
+              onChange={onFormChange}
+              placeholder="3 months"
+            />
+          </label>
+          <label className="learn-form-field">
+            <span>Model</span>
+            <select name="model" value={form.model} onChange={onFormChange}>
+              {models.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <button className="primary-button" type="submit" disabled={loading}>
+          <i className={`bi ${loading ? "bi-arrow-repeat" : "bi-diagram-3"}`} />
+          {loading ? "Generating path..." : "Generate roadmap"}
+        </button>
+      </form>
+
+      {result ? (
+        <div className="roadmap-result">
+          <div className="roadmap-summary">
+            <span className="overview-label">Roadmap</span>
+            <h3>{result.title}</h3>
+            <p>{result.summary}</p>
+          </div>
+
+          {result.first_steps?.length ? (
+            <div className="roadmap-first-steps">
+              <div className="section-heading">
+                <span><i className="bi bi-lightning-charge" /> First steps</span>
+                <span>{result.first_steps.length}</span>
+              </div>
+              <ul className="roadmap-step-list">
+                {result.first_steps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          <div className="roadmap-milestones">
+            {result.milestones?.map((milestone, index) => (
+              <article key={`${milestone.title}-${index}`} className="roadmap-milestone">
+                <span className="overview-label">Milestone {index + 1}</span>
+                <h4>{milestone.title}</h4>
+                <p><strong>Duration:</strong> {milestone.duration}</p>
+                <p><strong>Focus:</strong> {milestone.focus}</p>
+                <p><strong>Deliverable:</strong> {milestone.deliverable}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function LearnPage({
+  models,
+  quizTopic,
+  quizModel,
+  quizQuestionCount,
+  quizLoading,
+  activeQuiz,
+  quizHistory,
+  quizFocusQuestionId,
+  answeringQuizQuestionId,
+  quizModalOpen,
+  learningPathForm,
+  learningPathLoading,
+  learningPath,
+  onQuizTopicChange,
+  onQuizModelChange,
+  onQuizQuestionCountChange,
+  onStartQuiz,
+  onOpenQuiz,
+  onCloseQuiz,
+  onAnswerQuizQuestion,
+  onContinueQuiz,
+  onPreviousQuiz,
+  onLearningPathFormChange,
+  onGenerateLearningPath,
+}) {
+  return (
+    <div className="learn-page">
+      <div className="learn-grid">
+        <QuizModeCard
+          models={models}
+          topic={quizTopic}
+          model={quizModel}
+          questionCount={quizQuestionCount}
+          loading={quizLoading}
+          activeQuiz={activeQuiz}
+          quizHistory={quizHistory}
+          onTopicChange={onQuizTopicChange}
+          onModelChange={onQuizModelChange}
+          onQuestionCountChange={onQuizQuestionCountChange}
+          onStartQuiz={onStartQuiz}
+          onOpenQuiz={onOpenQuiz}
+        />
+        <LearningPathCard
+          models={models}
+          form={learningPathForm}
+          loading={learningPathLoading}
+          result={learningPath}
+          onFormChange={onLearningPathFormChange}
+          onSubmit={onGenerateLearningPath}
+        />
+      </div>
+
+      <QuizModal
+        quiz={activeQuiz}
+        focusQuestionId={quizFocusQuestionId}
+        answeringQuestionId={answeringQuizQuestionId}
+        open={quizModalOpen}
+        onClose={onCloseQuiz}
+        onAnswer={onAnswerQuizQuestion}
+        onContinue={onContinueQuiz}
+        onPrevious={onPreviousQuiz}
+      />
     </div>
   );
 }
@@ -1927,6 +2429,24 @@ export default function App() {
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editingDraft, setEditingDraft] = useState("");
   const [savingEditMessageId, setSavingEditMessageId] = useState(null);
+  const [quizTopic, setQuizTopic] = useState("");
+  const [quizModel, setQuizModel] = useState("");
+  const [quizQuestionCount, setQuizQuestionCount] = useState("5");
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quizHistory, setQuizHistory] = useState([]);
+  const [activeQuiz, setActiveQuiz] = useState(null);
+  const [quizFocusQuestionId, setQuizFocusQuestionId] = useState(null);
+  const [answeringQuizQuestionId, setAnsweringQuizQuestionId] = useState(null);
+  const [quizModalOpen, setQuizModalOpen] = useState(false);
+  const [learningPathForm, setLearningPathForm] = useState({
+    goal: "",
+    experience_level: "",
+    weekly_hours: "",
+    timeline: "",
+    model: "",
+  });
+  const [learningPathLoading, setLearningPathLoading] = useState(false);
+  const [learningPath, setLearningPath] = useState(null);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState("");
   const [sharedChat, setSharedChat] = useState(null);
@@ -1987,6 +2507,16 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => () => abortStreamRequest(), []);
+
+  useEffect(() => {
+    if (!models.length) {
+      return;
+    }
+    setQuizModel((current) => current || models[0].key);
+    setLearningPathForm((current) => (
+      current.model ? current : { ...current, model: models[0].key }
+    ));
+  }, [models]);
 
   useEffect(() => {
     setMobileActionsOpen(false);
@@ -2074,6 +2604,11 @@ export default function App() {
     }
   }
 
+  async function loadLearningQuizzes() {
+    const payload = await apiRequest("/api/learning/quizzes/");
+    setQuizHistory(payload.quizzes || []);
+  }
+
   async function refreshUsage() {
     try {
       const [usagePayload, usageByModelPayload] = await Promise.all([
@@ -2109,6 +2644,12 @@ export default function App() {
     setRegeneratingMessageId(null);
     setPinningSessionId(null);
     setSharingSessionId(null);
+    setQuizHistory([]);
+    setActiveQuiz(null);
+    setQuizFocusQuestionId(null);
+    setAnsweringQuizQuestionId(null);
+    setQuizModalOpen(false);
+    setLearningPath(null);
     clearEditState();
   }
 
@@ -2696,6 +3237,171 @@ export default function App() {
     }
   }
 
+  async function handleStartQuiz(event) {
+    event.preventDefault();
+    const topic = quizTopic.trim();
+
+    if (!topic) {
+      showToast("Topic required", "Enter a topic before starting quiz mode.", "error");
+      return;
+    }
+
+    setQuizLoading(true);
+
+    try {
+      const payload = await apiRequest("/api/learning/quizzes/create/", {
+        method: "POST",
+        body: JSON.stringify({
+          topic,
+          model: quizModel,
+          question_count: Number(quizQuestionCount),
+        }),
+      });
+      setActiveQuiz(payload.quiz);
+      setQuizFocusQuestionId(payload.quiz.questions?.[0]?.id || null);
+      setQuizModalOpen(false);
+      setQuizHistory((current) => upsertQuizHistory(current, payload.quiz));
+      showToast("Quiz ready", `Your ${payload.quiz.topic} quiz is ready to start.`, "success");
+    } catch (error) {
+      showToast("Quiz failed", error.message, "error");
+    } finally {
+      setQuizLoading(false);
+    }
+  }
+
+  async function handleAnswerQuizQuestion(question, selectedOption) {
+    if (!activeQuiz?.id || !question?.id || answeringQuizQuestionId) {
+      return;
+    }
+
+    setAnsweringQuizQuestionId(question.id);
+
+    try {
+      const payload = await apiRequest(
+        `/api/learning/quizzes/${activeQuiz.id}/questions/${question.id}/answer/`,
+        {
+          method: "POST",
+          body: JSON.stringify({ selected_option: selectedOption }),
+        },
+      );
+      setActiveQuiz(payload.quiz);
+      setQuizFocusQuestionId(question.id);
+      setQuizHistory((current) => upsertQuizHistory(current, payload.quiz));
+      showToast(
+        payload.question.is_correct ? "Correct answer" : "Answer recorded",
+        payload.question.is_correct
+          ? "Nice work. Your score has been updated."
+          : `The right option was ${payload.question.correct_option}.`,
+        payload.question.is_correct ? "success" : "info",
+      );
+      if (payload.quiz.is_completed) {
+        setQuizModalOpen(false);
+        showToast(
+          "Quiz completed",
+          `You scored ${payload.quiz.correct_answers}/${payload.quiz.total_questions}.`,
+          "success",
+        );
+      }
+    } catch (error) {
+      showToast("Quiz answer failed", error.message, "error");
+    } finally {
+      setAnsweringQuizQuestionId(null);
+    }
+  }
+
+  function handleContinueQuiz() {
+    if (!activeQuiz?.questions?.length) {
+      return;
+    }
+
+    const currentIndex = activeQuiz.questions.findIndex((item) => item.id === quizFocusQuestionId);
+    if (activeQuiz.is_completed) {
+      const nextQuestion = activeQuiz.questions[currentIndex + 1] || null;
+      if (nextQuestion) {
+        setQuizFocusQuestionId(nextQuestion.id);
+      }
+      return;
+    }
+
+    const nextQuestion = activeQuiz.questions.find((item) => !item.selected_option) || null;
+    if (nextQuestion) {
+      setQuizFocusQuestionId(nextQuestion.id);
+    }
+  }
+
+  function handlePreviousQuiz() {
+    if (!activeQuiz?.questions?.length) {
+      return;
+    }
+    const currentIndex = activeQuiz.questions.findIndex((item) => item.id === quizFocusQuestionId);
+    const previousQuestion = currentIndex > 0 ? activeQuiz.questions[currentIndex - 1] : null;
+    if (previousQuestion) {
+      setQuizFocusQuestionId(previousQuestion.id);
+    }
+  }
+
+  async function handleOpenQuiz(quiz) {
+    if (!quiz) {
+      return;
+    }
+
+    try {
+      const payload = await apiRequest(`/api/learning/quizzes/${quiz.id}/`);
+      const resolvedQuiz = payload.quiz;
+      const questions = resolvedQuiz.questions || [];
+      const initialQuestion = resolvedQuiz.is_completed
+        ? questions[0]
+        : questions.find((item) => !item.selected_option) || questions[0];
+
+      setActiveQuiz(resolvedQuiz);
+      setQuizHistory((current) => upsertQuizHistory(current, resolvedQuiz));
+      setQuizFocusQuestionId(initialQuestion?.id || null);
+      setQuizModalOpen(true);
+    } catch (error) {
+      showToast("Quiz unavailable", error.message, "error");
+    }
+  }
+
+  function handleLearningPathFormChange(event) {
+    const { name, value } = event.target;
+    setLearningPathForm((current) => ({ ...current, [name]: value }));
+  }
+
+  async function handleGenerateLearningPath(event) {
+    event.preventDefault();
+    const goal = learningPathForm.goal.trim();
+
+    if (!goal) {
+      showToast("Goal required", "Tell the assistant what you want to learn first.", "error");
+      return;
+    }
+
+    setLearningPathLoading(true);
+
+    try {
+      const payload = await apiRequest("/api/learning/path/", {
+        method: "POST",
+        body: JSON.stringify(learningPathForm),
+      });
+      setLearningPath(payload.path);
+      showToast("Roadmap ready", "Your personalized learning path has been generated.", "success");
+    } catch (error) {
+      showToast("Roadmap failed", error.message, "error");
+    } finally {
+      setLearningPathLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!currentUser || currentPage !== "learn") {
+      return;
+    }
+
+    loadLearningQuizzes().catch((error) => {
+      showToast("Learning tools unavailable", error.message, "error");
+    });
+  }, [currentPage, currentUser]);
+
   if (!authReady) {
     return (
       <div className="loading-shell">
@@ -2770,6 +3476,10 @@ export default function App() {
             }}
             onOpenProfile={() => {
               setCurrentPage("profile");
+              setSidebarOpen(false);
+            }}
+            onOpenLearn={() => {
+              setCurrentPage("learn");
               setSidebarOpen(false);
             }}
             onSearchChange={(event) => setSessionSearch(event.target.value)}
@@ -2901,10 +3611,14 @@ export default function App() {
                 </div>
               </div>
               <div className="workspace-heading-copy">
-                <h1>{currentPage === "profile" ? "Profile" : activeSession?.title || "New conversation"}</h1>
+                <h1>{currentPage === "profile" ? "Profile" : currentPage === "learn" ? "Learn" : activeSession?.title || "New conversation"}</h1>
                 {currentPage === "profile" ? (
                   <p className="workspace-subtitle">
                     A separate page for this user’s account details and usage totals.
+                  </p>
+                ) : currentPage === "learn" ? (
+                  <p className="workspace-subtitle">
+                    Practice with quizzes and generate guided learning roadmaps inside your workspace.
                   </p>
                 ) : null}
               </div>
@@ -2912,6 +3626,33 @@ export default function App() {
 
             {currentPage === "profile" ? (
               <ProfilePage currentUser={currentUser} usage={usage} usageByModel={usageByModel} sessions={sessions} theme={theme} />
+            ) : currentPage === "learn" ? (
+              <LearnPage
+                models={models}
+                quizTopic={quizTopic}
+                quizModel={quizModel}
+                quizQuestionCount={quizQuestionCount}
+                quizLoading={quizLoading}
+                activeQuiz={activeQuiz}
+              quizHistory={quizHistory}
+              quizFocusQuestionId={quizFocusQuestionId}
+              answeringQuizQuestionId={answeringQuizQuestionId}
+              quizModalOpen={quizModalOpen}
+              learningPathForm={learningPathForm}
+              learningPathLoading={learningPathLoading}
+              learningPath={learningPath}
+                onQuizTopicChange={(event) => setQuizTopic(event.target.value)}
+                onQuizModelChange={(event) => setQuizModel(event.target.value)}
+                onQuizQuestionCountChange={(event) => setQuizQuestionCount(event.target.value)}
+                onStartQuiz={handleStartQuiz}
+                onOpenQuiz={handleOpenQuiz}
+                onCloseQuiz={() => setQuizModalOpen(false)}
+                onAnswerQuizQuestion={handleAnswerQuizQuestion}
+                onContinueQuiz={handleContinueQuiz}
+                onPreviousQuiz={handlePreviousQuiz}
+                onLearningPathFormChange={handleLearningPathFormChange}
+                onGenerateLearningPath={handleGenerateLearningPath}
+              />
             ) : (
               <>
                 <section className="conversation-panel">

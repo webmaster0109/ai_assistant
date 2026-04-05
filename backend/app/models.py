@@ -105,6 +105,57 @@ class ChatConversations(models.Model):
         return self.user_message[:80]
 
 
+class LearningQuizSession(models.Model):
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="learning_quiz_sessions",
+    )
+    topic = models.CharField(max_length=200)
+    model = models.CharField(max_length=100)
+    total_questions = models.PositiveIntegerField(default=5)
+    correct_answers = models.PositiveIntegerField(default=0)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["owner", "-created_at"], name="app_learnquiz_owner_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.owner} - {self.topic}"
+
+
+class LearningQuizQuestion(models.Model):
+    quiz_session = models.ForeignKey(
+        LearningQuizSession,
+        on_delete=models.CASCADE,
+        related_name="questions",
+    )
+    question_text = models.TextField()
+    option_a = models.CharField(max_length=500)
+    option_b = models.CharField(max_length=500)
+    option_c = models.CharField(max_length=500)
+    option_d = models.CharField(max_length=500)
+    correct_option = models.CharField(max_length=1)
+    explanation = models.TextField(blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    selected_option = models.CharField(max_length=1, blank=True)
+    is_correct = models.BooleanField(null=True, blank=True)
+    answered_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+        indexes = [
+            models.Index(fields=["quiz_session", "sort_order"], name="app_learnqz_sort_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.quiz_session.topic} #{self.sort_order}"
+
+
 class WebsiteSettings(models.Model):
     website_name = models.CharField(max_length=100, default="Ollama AI")
     website_logo = models.ImageField(upload_to='logos/', null=True, blank=True)

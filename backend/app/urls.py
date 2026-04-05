@@ -13,6 +13,15 @@ urlpatterns = [
     path('api/auth/login/', views.login_user, name='login_user'),
     path('api/auth/logout/', views.logout_user, name='logout_user'),
     path('api/models/', views.models_catalog, name='models_catalog'),
+    path('api/learning/quizzes/', views.learning_quiz_sessions, name='learning_quiz_sessions'),
+    path('api/learning/quizzes/<int:quiz_id>/', views.learning_quiz_detail, name='learning_quiz_detail'),
+    path('api/learning/quizzes/create/', views.create_learning_quiz, name='create_learning_quiz'),
+    path(
+        'api/learning/quizzes/<int:quiz_id>/questions/<int:question_id>/answer/',
+        views.answer_learning_quiz_question,
+        name='answer_learning_quiz_question',
+    ),
+    path('api/learning/path/', views.create_learning_path, name='create_learning_path'),
     path('api/chat/', views.chat_post, name='chat_post'),
     path('api/chat/documents/', views.upload_chat_document, name='upload_chat_document'),
     path(
