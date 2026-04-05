@@ -1352,6 +1352,39 @@ p {
   color: #dff9ee;
 }
 
+.message-inline-math {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.02rem 0.1rem;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: middle;
+}
+
+.message-math-block {
+  max-width: 100%;
+  margin: 0.3rem 0;
+  padding: 0.8rem 0.95rem;
+  border-radius: 16px;
+  border: 1px solid rgba(23, 89, 74, 0.12);
+  background: rgba(23, 89, 74, 0.04);
+  overflow-x: auto;
+}
+
+:root[data-theme="dark"] .message-math-block {
+  border-color: rgba(125, 211, 176, 0.14);
+  background: rgba(125, 211, 176, 0.05);
+}
+
+.message-inline-math .katex,
+.message-math-block .katex {
+  font-size: 1.02em;
+}
+
+.message-math-block .katex-display {
+  margin: 0;
+}
+
 .message-edit-form {
   display: flex;
   flex-direction: column;

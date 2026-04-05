@@ -4,7 +4,7 @@ import hashlib
 from functools import wraps
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
-from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
+from django.http import HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.template.loader import render_to_string
 from django.templatetags.static import static

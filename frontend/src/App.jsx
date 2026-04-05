@@ -371,7 +371,126 @@ function parseMarkdownTableBlock(lines) {
   };
 }
 
+function isLikelyMathLine(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  return (
+    /^\\\[|^\\\]|^\$\$/.test(trimmed)
+    || /^\\(begin|end|times|cdot|frac|sqrt|sum|int|left|right|alpha|beta|gamma|theta|pi|sin|cos|tan|log|ln|leq|geq|neq|to|rightarrow|infty|quad|qquad|text)\b/.test(trimmed)
+    || /\\times|\\cdot|\\frac|\\sqrt|\\sum|\\int|\\left|\\right/.test(trimmed)
+    || /[&^_]/.test(trimmed)
+    || /\\\\\s*$/.test(trimmed)
+    || /^[=\-+*/()[\]{}0-9.,\s]+$/.test(trimmed)
+  );
+}
+
+function unwrapMathBlock(value) {
+  let math = String(value || "").trim();
+
+  if (math.startsWith("$$") && math.endsWith("$$")) {
+    math = math.slice(2, -2).trim();
+  } else if (math.startsWith("\\[") && math.endsWith("\\]")) {
+    math = math.slice(2, -2).trim();
+  } else {
+    math = math
+      .replace(/^\\\[\s*\n?/, "")
+      .replace(/\n?\s*\\\]$/, "")
+      .replace(/^\$\$\s*\n?/, "")
+      .replace(/\n?\s*\$\$$/, "")
+      .trim();
+  }
+
+  return math;
+}
+
+function findNextDisplayMathSegment(value) {
+  const source = String(value || "");
+  if (!source) {
+    return null;
+  }
+
+  const patterns = [
+    { type: "bracket", regex: /\\\[[\s\S]*?\\\]/g },
+    { type: "dollar", regex: /\$\$[\s\S]*?\$\$/g },
+    { type: "environment", regex: /\\begin\{([a-z*]+)\}[\s\S]*?\\end\{\1\}/g },
+  ];
+
+  let earliest = null;
+  for (const pattern of patterns) {
+    pattern.regex.lastIndex = 0;
+    const match = pattern.regex.exec(source);
+    if (!match) {
+      continue;
+    }
+
+    if (!earliest || match.index < earliest.index) {
+      earliest = {
+        index: match.index,
+        raw: match[0],
+      };
+    }
+  }
+
+  return earliest;
+}
+
+function findNextCodeFenceSegment(value) {
+  const source = String(value || "");
+  const match = /```([\w.+-]*)\n?([\s\S]*?)```/g.exec(source);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    index: match.index,
+    raw: match[0],
+    language: (match[1] || "").trim(),
+    content: match[2].replace(/^\n+|\n+$/g, ""),
+  };
+}
+
+function findNextSpecialSegment(value) {
+  const codeSegment = findNextCodeFenceSegment(value);
+  const mathSegment = findNextDisplayMathSegment(value);
+
+  if (codeSegment && (!mathSegment || codeSegment.index <= mathSegment.index)) {
+    return {
+      type: "code",
+      ...codeSegment,
+    };
+  }
+
+  if (mathSegment) {
+    return {
+      type: "math",
+      ...mathSegment,
+    };
+  }
+
+  return null;
+}
+
 function parseTextOrCodeBlock(block) {
+  const trimmedBlock = block.trim();
+  if (/^\$\$[\s\S]+\$\$$/.test(trimmedBlock)) {
+    return [{
+      type: "math",
+      display: true,
+      content: trimmedBlock.slice(2, -2).trim(),
+    }];
+  }
+
+  if (/^\\\[[\s\S]+\\\]$/.test(trimmedBlock)) {
+    return [{
+      type: "math",
+      display: true,
+      content: trimmedBlock.slice(2, -2).trim(),
+    }];
+  }
+
   const lines = block.split("\n");
   const codeLineCount = lines.filter(isLikelyCodeLine).length;
   const isCodeBlock = lines.length >= 3 && codeLineCount >= Math.max(2, Math.ceil(lines.length / 2));
@@ -401,6 +520,36 @@ function parseLooseAssistantBlocks(value) {
   const blocks = normalized.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
 
   return blocks.flatMap((block) => {
+    const mixedSegments = [];
+    let remaining = block;
+    let displayMath = findNextDisplayMathSegment(remaining);
+
+    while (displayMath) {
+      const prefix = remaining.slice(0, displayMath.index).trim();
+      if (prefix) {
+        mixedSegments.push(...parseLooseAssistantBlocks(prefix));
+      }
+
+      const expression = unwrapMathBlock(displayMath.raw);
+      if (expression) {
+        mixedSegments.push({
+          type: "math",
+          display: true,
+          content: expression,
+        });
+      }
+
+      remaining = remaining.slice(displayMath.index + displayMath.raw.length).trim();
+      displayMath = findNextDisplayMathSegment(remaining);
+    }
+
+    if (mixedSegments.length) {
+      if (remaining) {
+        mixedSegments.push(...parseLooseAssistantBlocks(remaining));
+      }
+      return mixedSegments;
+    }
+
     const lines = block.split("\n");
     const segments = [];
     let buffer = [];
@@ -415,6 +564,32 @@ function parseLooseAssistantBlocks(value) {
     }
 
     for (let index = 0; index < lines.length; index += 1) {
+      const trimmedLine = lines[index].trim();
+
+      if (
+        trimmedLine.startsWith("\\[")
+        || trimmedLine.startsWith("$$")
+        || trimmedLine.startsWith("\\begin{")
+      ) {
+        flushBuffer();
+        const mathLines = [lines[index]];
+
+        while (index + 1 < lines.length && isLikelyMathLine(lines[index + 1])) {
+          index += 1;
+          mathLines.push(lines[index]);
+        }
+
+        const expression = unwrapMathBlock(mathLines.join("\n"));
+        if (expression) {
+          segments.push({
+            type: "math",
+            display: true,
+            content: expression,
+          });
+        }
+        continue;
+      }
+
       if (
         index + 1 < lines.length
         && isMarkdownTableHeader(lines[index])
@@ -443,27 +618,41 @@ function parseLooseAssistantBlocks(value) {
 function parseAssistantMessage(value) {
   const source = normalizeAssistantSource(value);
   const segments = [];
-  const fencePattern = /```([\w.+-]*)\n?([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match = fencePattern.exec(source);
+  let remaining = source;
+  let specialSegment = findNextSpecialSegment(remaining);
 
-  while (match) {
-    segments.push(...parseLooseAssistantBlocks(source.slice(lastIndex, match.index)));
+  while (specialSegment) {
+    const before = remaining.slice(0, specialSegment.index);
+    if (before.trim()) {
+      segments.push(...parseLooseAssistantBlocks(before));
+    }
 
-    const code = match[2].replace(/^\n+|\n+$/g, "");
-    if (code) {
+    if (specialSegment.type === "code" && specialSegment.content) {
       segments.push({
         type: "code",
-        language: (match[1] || "").trim(),
-        content: code,
+        language: specialSegment.language,
+        content: specialSegment.content,
       });
     }
 
-    lastIndex = fencePattern.lastIndex;
-    match = fencePattern.exec(source);
+    if (specialSegment.type === "math") {
+      const expression = unwrapMathBlock(specialSegment.raw);
+      if (expression) {
+        segments.push({
+          type: "math",
+          display: true,
+          content: expression,
+        });
+      }
+    }
+
+    remaining = remaining.slice(specialSegment.index + specialSegment.raw.length);
+    specialSegment = findNextSpecialSegment(remaining);
   }
 
-  segments.push(...parseLooseAssistantBlocks(source.slice(lastIndex)));
+  if (remaining.trim()) {
+    segments.push(...parseLooseAssistantBlocks(remaining));
+  }
 
   if (!segments.length) {
     return [{ type: "text", content: sanitizeAssistantText(source) }];
@@ -509,6 +698,46 @@ function normalizeCodeLanguage(language) {
   };
 
   return aliases[value] || value;
+}
+
+function renderKatexMarkup(expression, displayMode = false) {
+  const katex = window.katex;
+  if (!katex?.renderToString || !expression) {
+    return "";
+  }
+
+  try {
+    return katex.renderToString(expression, {
+      throwOnError: false,
+      displayMode,
+      strict: "ignore",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function MathBlock({ expression, display = false }) {
+  const markup = useMemo(() => renderKatexMarkup(expression, display), [expression, display]);
+  const fallback = display ? `$$${expression}$$` : `$${expression}$`;
+
+  if (!markup) {
+    return display
+      ? <div className="message-math-block">{fallback}</div>
+      : <span className="message-inline-math">{fallback}</span>;
+  }
+
+  return display ? (
+    <div
+      className="message-math-block"
+      dangerouslySetInnerHTML={{ __html: markup }}
+    />
+  ) : (
+    <span
+      className="message-inline-math"
+      dangerouslySetInnerHTML={{ __html: markup }}
+    />
+  );
 }
 
 function CodeBlock({ language, code }) {
@@ -574,7 +803,7 @@ function CodeBlock({ language, code }) {
 function renderInlineRichText(text) {
   const source = String(text || "");
   const tokens = [];
-  const pattern = /(\*\*[^*]+?\*\*|__[^_]+?__|\*[^*\n]+?\*|_[^_\n]+?_|\+\+[^+\n]+?\+\+|`[^`\n]+?`)/g;
+  const pattern = /(\\\((?:\\.|[^\\])+?\\\)|\$(?:\\.|[^$\n])+\$|\*\*[^*]+?\*\*|__[^_]+?__|\*[^*\n]+?\*|_[^_\n]+?_|\+\+[^+\n]+?\+\+|`[^`\n]+?`)/g;
   let lastIndex = 0;
   let match = pattern.exec(source);
 
@@ -584,7 +813,11 @@ function renderInlineRichText(text) {
     }
 
     const token = match[0];
-    if ((token.startsWith("**") && token.endsWith("**")) || (token.startsWith("__") && token.endsWith("__"))) {
+    if (token.startsWith("\\(") && token.endsWith("\\)")) {
+      tokens.push(<MathBlock key={`math-${match.index}`} expression={token.slice(2, -2).trim()} />);
+    } else if (token.startsWith("$") && token.endsWith("$")) {
+      tokens.push(<MathBlock key={`math-${match.index}`} expression={token.slice(1, -1).trim()} />);
+    } else if ((token.startsWith("**") && token.endsWith("**")) || (token.startsWith("__") && token.endsWith("__"))) {
       tokens.push(<strong key={`strong-${match.index}`}>{token.slice(2, -2)}</strong>);
     } else if ((token.startsWith("*") && token.endsWith("*")) || (token.startsWith("_") && token.endsWith("_"))) {
       tokens.push(<em key={`em-${match.index}`}>{token.slice(1, -1)}</em>);
@@ -664,6 +897,12 @@ function AssistantMessageContent({ value }) {
             key={`table-${index}`}
             headers={segment.headers}
             rows={segment.rows}
+          />
+        ) : segment.type === "math" ? (
+          <MathBlock
+            key={`math-block-${index}`}
+            expression={segment.content}
+            display={segment.display}
           />
         ) : (
           <div className="message-body" key={`text-${index}`}>
@@ -1449,6 +1688,7 @@ function ChatComposer({
 }
 
 function MessageList({
+  activeSessionId,
   branding,
   messages,
   pendingPrompt,
@@ -1541,15 +1781,17 @@ function MessageList({
             <header>
               <span>{readOnly ? `${branding.website_name} • shared by ${sharedOwner}` : branding.website_name}</span>
               {!readOnly ? (
-                <button
-                  className="message-action"
-                  type="button"
-                  onClick={() => onRegenerate(message)}
-                  disabled={Boolean(regeneratingMessageId || savingEditMessageId)}
-                >
-                  <i className={`bi ${regeneratingMessageId === message.id ? "bi-arrow-repeat" : "bi-arrow-clockwise"}`} />
-                  {regeneratingMessageId === message.id ? "Regenerating..." : "Regenerate"}
-                </button>
+                <div className="message-meta">
+                  <button
+                    className="message-action"
+                    type="button"
+                    onClick={() => onRegenerate(message)}
+                    disabled={Boolean(regeneratingMessageId || savingEditMessageId)}
+                  >
+                    <i className={`bi ${regeneratingMessageId === message.id ? "bi-arrow-repeat" : "bi-arrow-clockwise"}`} />
+                    {regeneratingMessageId === message.id ? "Regenerating..." : "Regenerate"}
+                  </button>
+                </div>
               ) : null}
             </header>
             <AssistantMessageContent value={message.ai_message} />
@@ -1615,6 +1857,7 @@ function SharedChatPage({ branding, sharePayload, shareNotFound, theme, onThemeT
             </div>
           ) : (
             <MessageList
+              activeSessionId={null}
               branding={branding}
               messages={sharePayload?.messages || []}
               pendingPrompt=""
@@ -2673,6 +2916,7 @@ export default function App() {
               <>
                 <section className="conversation-panel">
                 <MessageList
+                  activeSessionId={activeSessionId}
                   branding={branding}
                   messages={messages}
                   pendingPrompt={pendingPrompt}
