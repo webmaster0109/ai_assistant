@@ -7,6 +7,9 @@
     <title>{{ website_name }}</title>
     <meta name="description" content="{{ website_description }}" />
     <meta name="author" content="Shrichand Thapa" />
+    <meta name="theme-color" content="#17594a" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}" />
     {% if website_favicon %}
       <link rel="shortcut icon" href="{{ website_favicon }}" type="image/x-icon" />
     {% endif %}
@@ -14,6 +17,7 @@
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
     />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
     <link rel="stylesheet" href="{% static 'frontend/assets/app.css' %}" />
   </head>
   <body>

@@ -61,6 +61,34 @@ def usage_stats(user=None):
   )
   return stats
 
+def usage_by_model(user=None):
+  conversations = ChatConversations.objects.all()
+  if user is not None:
+    conversations = conversations.filter(session__owner=user)
+
+  rows = (
+    conversations.values("session__model")
+    .annotate(
+      total_input_tokens=Sum("input_tokens"),
+      total_output_tokens=Sum("output_tokens"),
+      total_conversations=Count("id"),
+    )
+    .order_by("-total_input_tokens", "-total_output_tokens", "session__model")
+  )
+
+  data = []
+  for row in rows:
+    input_tokens = row["total_input_tokens"] or 0
+    output_tokens = row["total_output_tokens"] or 0
+    data.append({
+      "model": row["session__model"],
+      "total_input_tokens": input_tokens,
+      "total_output_tokens": output_tokens,
+      "total_tokens": input_tokens + output_tokens,
+      "total_conversations": row["total_conversations"] or 0,
+    })
+  return data
+
 def cloud_usage_stats(request):
   if not request.user.is_authenticated:
     return JsonResponse({'detail': 'Authentication required.'}, status=401)
@@ -72,4 +100,12 @@ def cloud_usage_stats(request):
     'total_output_tokens': stats['total_output_tokens'] or 0,
     'total_tokens': total_tokens,
     'total_conversations': stats['total_conversations'] or 0,
+  }, status=200)
+
+def cloud_usage_by_model(request):
+  if not request.user.is_authenticated:
+    return JsonResponse({'detail': 'Authentication required.'}, status=401)
+
+  return JsonResponse({
+    "models": usage_by_model(user=request.user),
   }, status=200)

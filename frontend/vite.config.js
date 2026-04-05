@@ -15,6 +15,8 @@ export default defineConfig(({ command }) => ({
     proxy: {
       "/api": "http://127.0.0.1:8000",
       "/media": "http://127.0.0.1:8000",
+      "/manifest.webmanifest": "http://127.0.0.1:8000",
+      "/sw.js": "http://127.0.0.1:8000",
     },
   },
   build: {

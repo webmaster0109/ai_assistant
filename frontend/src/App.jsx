@@ -1,4 +1,33 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import css from "highlight.js/lib/languages/css";
+import django from "highlight.js/lib/languages/django";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import python from "highlight.js/lib/languages/python";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
+
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("shell", bash);
+hljs.registerLanguage("sh", bash);
+hljs.registerLanguage("css", css);
+hljs.registerLanguage("django", django);
+hljs.registerLanguage("html", xml);
+hljs.registerLanguage("xml", xml);
+hljs.registerLanguage("javascript", javascript);
+hljs.registerLanguage("js", javascript);
+hljs.registerLanguage("json", json);
+hljs.registerLanguage("python", python);
+hljs.registerLanguage("py", python);
+hljs.registerLanguage("sql", sql);
+hljs.registerLanguage("typescript", typescript);
+hljs.registerLanguage("ts", typescript);
+hljs.registerLanguage("yaml", yaml);
+hljs.registerLanguage("yml", yaml);
 
 const rootElement = document.getElementById("root");
 const initialBranding = {
@@ -49,6 +78,49 @@ async function apiRequest(path, options = {}) {
   return payload;
 }
 
+function parseSseBlock(block) {
+  const lines = String(block || "").split("\n");
+  let event = "message";
+  const dataLines = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    if (!line || line.startsWith(":")) {
+      continue;
+    }
+
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+      continue;
+    }
+
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+
+  if (!dataLines.length) {
+    return null;
+  }
+
+  return {
+    event,
+    payload: JSON.parse(dataLines.join("\n")),
+  };
+}
+
+function getShareTokenFromPath() {
+  const match = window.location.pathname.match(/^\/share\/([^/]+)\/?$/);
+  return match ? match[1] : "";
+}
+
+function buildAbsoluteUrl(path) {
+  if (!path) {
+    return "";
+  }
+  return new URL(path, window.location.origin).href;
+}
+
 function formatTimestamp(value) {
   if (!value) {
     return "";
@@ -73,6 +145,26 @@ function formatTokenCount(value) {
     return `${(value / 1000).toFixed(1)}K`;
   }
   return String(value);
+}
+
+function sortSessions(list) {
+  return [...list].sort((left, right) => {
+    const pinDelta = Number(Boolean(right.is_pinned)) - Number(Boolean(left.is_pinned));
+    if (pinDelta !== 0) {
+      return pinDelta;
+    }
+
+    return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+  });
+}
+
+function upsertSession(list, session) {
+  if (!session) {
+    return sortSessions(list);
+  }
+
+  const deduped = list.filter((item) => item.id !== session.id);
+  return sortSessions([session, ...deduped]);
 }
 
 function decodeHtmlEntities(value) {
@@ -276,8 +368,32 @@ function copyText(value) {
   return Promise.resolve();
 }
 
+function normalizeCodeLanguage(language) {
+  const value = String(language || "").trim().toLowerCase();
+  if (!value) {
+    return "";
+  }
+
+  const aliases = {
+    html: "xml",
+    vue: "xml",
+    jsx: "javascript",
+    tsx: "typescript",
+    py: "python",
+    js: "javascript",
+    ts: "typescript",
+    yml: "yaml",
+    shell: "bash",
+    sh: "bash",
+  };
+
+  return aliases[value] || value;
+}
+
 function CodeBlock({ language, code }) {
   const [copied, setCopied] = useState(false);
+  const codeRef = useRef(null);
+  const resolvedLanguage = useMemo(() => normalizeCodeLanguage(language), [language]);
 
   useEffect(() => {
     if (!copied) {
@@ -287,6 +403,22 @@ function CodeBlock({ language, code }) {
     const timer = window.setTimeout(() => setCopied(false), 1800);
     return () => window.clearTimeout(timer);
   }, [copied]);
+
+  useEffect(() => {
+    if (!codeRef.current) {
+      return;
+    }
+
+    codeRef.current.removeAttribute("data-highlighted");
+    codeRef.current.className = resolvedLanguage ? `language-${resolvedLanguage}` : "";
+
+    if (resolvedLanguage && hljs.getLanguage(resolvedLanguage)) {
+      hljs.highlightElement(codeRef.current);
+      return;
+    }
+
+    hljs.highlightElement(codeRef.current);
+  }, [code, resolvedLanguage]);
 
   async function handleCopy() {
     try {
@@ -300,7 +432,7 @@ function CodeBlock({ language, code }) {
   return (
     <div className="message-code">
       <div className="message-code-toolbar">
-        <span className="message-code-language">{language || "Code"}</span>
+        <span className="message-code-language">{resolvedLanguage || language || "Code"}</span>
         <button
           className="message-code-copy"
           type="button"
@@ -312,7 +444,7 @@ function CodeBlock({ language, code }) {
         </button>
       </div>
       <pre className="message-code-pre">
-        <code>{code}</code>
+        <code ref={codeRef}>{code}</code>
       </pre>
     </div>
   );
@@ -643,13 +775,32 @@ function SessionList({
   activeSessionId,
   currentPage,
   sidebarOpen,
+  searchValue,
+  busy,
+  pinnedCount,
+  pinningSessionId,
   onNewChat,
   onClose,
   onOpenChats,
   onOpenProfile,
+  onSearchChange,
   onSelect,
+  onTogglePin,
   onDelete,
 }) {
+  const filteredSessions = useMemo(() => {
+    const query = searchValue.trim().toLowerCase();
+    if (!query) {
+      return sessions;
+    }
+
+    return sessions.filter((session) =>
+      [session.title, session.model, session.preview]
+        .filter(Boolean)
+        .some((value) => value.toLowerCase().includes(query)),
+    );
+  }, [searchValue, sessions]);
+
   return (
     <aside className={`sidebar ${sidebarOpen ? "is-open" : ""}`}>
       <div className="sidebar-block">
@@ -665,13 +816,22 @@ function SessionList({
             <i className="bi bi-x-lg" />
           </button>
         </div>
-        <p className="small-note">Your recent private chats live here.</p>
         <SidebarNav
           currentPage={currentPage}
           onOpenChats={onOpenChats}
           onOpenProfile={onOpenProfile}
         />
-        <button className="primary-button full-width" type="button" onClick={onNewChat}>
+        <label className="sidebar-search">
+          <i className="bi bi-search" />
+          <input
+            type="search"
+            value={searchValue}
+            onChange={onSearchChange}
+            placeholder="Search chats"
+            aria-label="Search chats"
+          />
+        </label>
+        <button className="primary-button full-width" type="button" onClick={onNewChat} disabled={busy}>
           <i className="bi bi-plus-lg" />
           New chat
         </button>
@@ -680,39 +840,66 @@ function SessionList({
       <div className="sidebar-block sidebar-sessions">
         <div className="section-heading">
           <span>Recent chats</span>
-          <span>{sessions.length}</span>
+          <span>{filteredSessions.length}</span>
         </div>
-        {sessions.length ? (
-          sessions.map((session) => (
-            <article
-              key={session.id}
-              className={`session-card ${session.id === activeSessionId ? "active" : ""}`}
-            >
-              <button
-                className="session-main"
-                type="button"
-                onClick={() => onSelect(session.id)}
+        {filteredSessions.length ? (
+          filteredSessions.map((session) => {
+            const pinLimitReached = !session.is_pinned && pinnedCount >= 3;
+            const pinTitle = pinLimitReached
+              ? "Only 3 chats can be pinned"
+              : session.is_pinned
+                ? `Unpin ${session.title}`
+                : `Pin ${session.title}`;
+
+            return (
+              <article
+                key={session.id}
+                className={`session-card ${session.id === activeSessionId ? "active" : ""}`}
               >
-                <span className="session-title">{session.title}</span>
-                <span className="session-meta">
-                  {session.model} • {formatTimestamp(session.updated_at)}
-                </span>
-                <span className="session-preview">{session.preview || "No messages yet."}</span>
-              </button>
-              <button
-                className="session-delete icon-button"
-                type="button"
-                onClick={() => onDelete(session.id)}
-                aria-label={`Delete ${session.title}`}
-                title={`Delete ${session.title}`}
-              >
-                <i className="bi bi-trash3" />
-              </button>
-            </article>
-          ))
+                <button
+                  className="session-main"
+                  type="button"
+                  onClick={() => onSelect(session.id)}
+                  disabled={busy}
+                >
+                  <span className="session-title">{session.title}</span>
+                  <span className="session-meta">
+                    {session.model} • {formatTimestamp(session.updated_at)}
+                  </span>
+                  <span className="session-preview">{session.preview || "No messages yet."}</span>
+                </button>
+                <div className="session-actions">
+                  <button
+                    className={`session-pin icon-button ${session.is_pinned ? "active" : ""}`}
+                    type="button"
+                    onClick={() => onTogglePin(session)}
+                    aria-label={pinTitle}
+                    title={pinTitle}
+                    disabled={busy || pinningSessionId === session.id || pinLimitReached}
+                  >
+                    <i className={`bi ${session.is_pinned ? "bi-pin-angle-fill" : "bi-pin-angle"}`} />
+                  </button>
+                  <button
+                    className="session-delete icon-button"
+                    type="button"
+                    onClick={() => onDelete(session.id)}
+                    aria-label={`Delete ${session.title}`}
+                    title={`Delete ${session.title}`}
+                    disabled={busy}
+                  >
+                    <i className="bi bi-trash3" />
+                  </button>
+                </div>
+              </article>
+            );
+          })
         ) : (
           <div className="empty-card">
-            <p>Your private chat history will appear here after the first message.</p>
+            <p>
+              {searchValue.trim()
+                ? "No chats match this search yet."
+                : "Your private chat history will appear here after the first message."}
+            </p>
           </div>
         )}
       </div>
@@ -720,7 +907,83 @@ function SessionList({
   );
 }
 
-function UsageCard({ usage }) {
+function UsageModelChart({ data, theme }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !window.Chart || !data.length) {
+      return undefined;
+    }
+
+    const chart = new window.Chart(canvasRef.current, {
+      type: "bar",
+      data: {
+        labels: data.map((item) => item.model),
+        datasets: [
+          {
+            label: "Input",
+            data: data.map((item) => item.total_input_tokens),
+            backgroundColor: theme === "dark" ? "rgba(125, 211, 176, 0.72)" : "rgba(23, 89, 74, 0.72)",
+            borderRadius: 12,
+            borderSkipped: false,
+          },
+          {
+            label: "Output",
+            data: data.map((item) => item.total_output_tokens),
+            backgroundColor: theme === "dark" ? "rgba(127, 215, 255, 0.78)" : "rgba(59, 130, 246, 0.72)",
+            borderRadius: 12,
+            borderSkipped: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            labels: {
+              color: theme === "dark" ? "#dbe7f4" : "#334155",
+              usePointStyle: true,
+              boxWidth: 10,
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: theme === "dark" ? "#9fb0c3" : "#64748b",
+            },
+            grid: {
+              display: false,
+            },
+          },
+          y: {
+            ticks: {
+              color: theme === "dark" ? "#9fb0c3" : "#64748b",
+            },
+            grid: {
+              color: theme === "dark" ? "rgba(148, 163, 184, 0.14)" : "rgba(148, 163, 184, 0.16)",
+            },
+          },
+        },
+      },
+    });
+
+    return () => chart.destroy();
+  }, [data, theme]);
+
+  if (!data.length) {
+    return <p className="small-note">Model usage will appear here once you have conversations.</p>;
+  }
+
+  return (
+    <div className="usage-chart-shell">
+      <canvas ref={canvasRef} />
+    </div>
+  );
+}
+
+function UsageCard({ usage, usageByModel, theme }) {
   return (
     <section className="usage-card">
       <div className="section-heading">
@@ -742,11 +1005,19 @@ function UsageCard({ usage }) {
           <strong>{formatTokenCount(usage.total_tokens)}</strong>
         </article>
       </div>
+      <div className="usage-model-panel">
+        <div className="section-heading">
+          <span><i className="bi bi-pie-chart" /> Model usage</span>
+          <span>{usageByModel.length}</span>
+        </div>
+        <p className="small-note">Each bar shows per-model token usage for this private account.</p>
+        <UsageModelChart data={usageByModel} theme={theme} />
+      </div>
     </section>
   );
 }
 
-function ProfilePage({ currentUser, usage, sessions }) {
+function ProfilePage({ currentUser, usage, usageByModel, sessions, theme }) {
   return (
     <div className="profile-page">
       <section className="profile-hero">
@@ -774,7 +1045,7 @@ function ProfilePage({ currentUser, usage, sessions }) {
         </article>
       </section>
 
-      <UsageCard usage={usage} />
+      <UsageCard usage={usage} usageByModel={usageByModel} theme={theme} />
     </div>
   );
 }
@@ -785,10 +1056,12 @@ function ChatComposer({
   models,
   isLocked,
   sending,
+  stoppingGeneration,
   onDraftChange,
   onModelChange,
   onDraftKeyDown,
   onSubmit,
+  onStop,
 }) {
   return (
     <form className="composer" onSubmit={onSubmit}>
@@ -821,21 +1094,47 @@ function ChatComposer({
             disabled={sending}
           />
         </div>
-        <button className="primary-button composer-button" type="submit" disabled={sending}>
-          <i className={`bi ${sending ? "bi-arrow-repeat" : "bi-send"}`} />
-          {sending ? "Sending..." : "Send"}
+        <button
+          className={`primary-button composer-button ${sending ? "stop-button" : ""}`}
+          type={sending ? "button" : "submit"}
+          onClick={sending ? onStop : undefined}
+          disabled={stoppingGeneration}
+        >
+          <i
+            className={`bi ${
+              sending ? (stoppingGeneration ? "bi-hourglass-split" : "bi-stop-circle") : "bi-send"
+            }`}
+          />
+          {sending ? (stoppingGeneration ? "Stopping..." : "Stop") : "Send"}
         </button>
       </div>
     </form>
   );
 }
 
-function MessageList({ branding, messages, pendingPrompt, loadingConversation }) {
+function MessageList({
+  branding,
+  messages,
+  pendingPrompt,
+  streamingResponse,
+  loadingConversation,
+  editingMessageId,
+  editingDraft,
+  regeneratingMessageId,
+  savingEditMessageId,
+  readOnly = false,
+  sharedOwner = "",
+  onEditDraftChange,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
+  onRegenerate,
+}) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, pendingPrompt, loadingConversation]);
+  }, [messages, pendingPrompt, streamingResponse, loadingConversation]);
 
   if (loadingConversation) {
     return (
@@ -865,13 +1164,57 @@ function MessageList({ branding, messages, pendingPrompt, loadingConversation })
           <article className="message-bubble user">
             <header>
               <span>You</span>
-              <time>{formatTimestamp(message.created_at)}</time>
+              <div className="message-meta">
+                <time>{formatTimestamp(message.created_at)}</time>
+                {!readOnly ? (
+                  <button
+                    className="message-action"
+                    type="button"
+                    onClick={() => onStartEdit(message)}
+                    disabled={Boolean(regeneratingMessageId || savingEditMessageId)}
+                  >
+                    <i className={`bi ${editingMessageId === message.id ? "bi-pencil-fill" : "bi-pencil"}`} />
+                    {editingMessageId === message.id ? "Editing" : "Edit"}
+                  </button>
+                ) : null}
+              </div>
             </header>
-            <div className="message-body">{message.user_message}</div>
+            {editingMessageId === message.id ? (
+              <div className="message-edit-form">
+                <textarea value={editingDraft} onChange={onEditDraftChange} rows={4} />
+                <div className="message-edit-actions">
+                  <button className="secondary-button" type="button" onClick={onCancelEdit}>
+                    Cancel
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => onSaveEdit(message)}
+                    disabled={savingEditMessageId === message.id}
+                  >
+                    <i className={`bi ${savingEditMessageId === message.id ? "bi-arrow-repeat" : "bi-check2"}`} />
+                    {savingEditMessageId === message.id ? "Saving..." : "Save and resend"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="message-body">{message.user_message}</div>
+            )}
           </article>
           <article className="message-bubble assistant">
             <header>
-              <span>{branding.website_name}</span>
+              <span>{readOnly ? `${branding.website_name} • shared by ${sharedOwner}` : branding.website_name}</span>
+              {!readOnly ? (
+                <button
+                  className="message-action"
+                  type="button"
+                  onClick={() => onRegenerate(message)}
+                  disabled={Boolean(regeneratingMessageId || savingEditMessageId)}
+                >
+                  <i className={`bi ${regeneratingMessageId === message.id ? "bi-arrow-repeat" : "bi-arrow-clockwise"}`} />
+                  {regeneratingMessageId === message.id ? "Regenerating..." : "Regenerate"}
+                </button>
+              ) : null}
             </header>
             <AssistantMessageContent value={message.ai_message} />
           </article>
@@ -890,7 +1233,11 @@ function MessageList({ branding, messages, pendingPrompt, loadingConversation })
             <header>
               <span>{branding.website_name}</span>
             </header>
-            <div className="message-body subtle">Thinking...</div>
+            {streamingResponse ? (
+              <AssistantMessageContent value={streamingResponse} />
+            ) : (
+              <div className="message-body subtle">Thinking...</div>
+            )}
           </article>
         </div>
       ) : null}
@@ -899,7 +1246,66 @@ function MessageList({ branding, messages, pendingPrompt, loadingConversation })
   );
 }
 
+function SharedChatPage({ branding, sharePayload, shareNotFound, theme, onThemeToggle }) {
+  return (
+    <div className="app-shell shared-shell">
+      <main className="workspace">
+        <header className="workspace-header">
+          <div className="workspace-heading">
+            <div className="workspace-heading-copy">
+              <p className="eyebrow">Shared read-only chat</p>
+              <h1>{sharePayload?.session?.title || "Shared conversation"}</h1>
+              <p className="workspace-subtitle">
+                {shareNotFound
+                  ? "This shared link is missing or no longer public."
+                  : `Anyone with this link can view the conversation in read-only mode.`}
+              </p>
+            </div>
+          </div>
+          <div className="workspace-actions">
+            <ThemeToggle theme={theme} onToggle={onThemeToggle} />
+            <a className="secondary-button icon-button" href="/" aria-label="Open main app" title="Open main app">
+              <i className="bi bi-house" />
+            </a>
+          </div>
+        </header>
+
+        <section className="conversation-panel">
+          {shareNotFound ? (
+            <div className="message-empty">
+              <p className="eyebrow">Unavailable</p>
+              <h2>Shared chat not found.</h2>
+              <p>The owner may have disabled sharing or removed this conversation.</p>
+            </div>
+          ) : (
+            <MessageList
+              branding={branding}
+              messages={sharePayload?.messages || []}
+              pendingPrompt=""
+              streamingResponse=""
+              loadingConversation={!sharePayload}
+              editingMessageId={null}
+              editingDraft=""
+              regeneratingMessageId={null}
+              savingEditMessageId={null}
+              readOnly
+              sharedOwner={sharePayload?.owner?.username || "owner"}
+              onEditDraftChange={() => {}}
+              onStartEdit={() => {}}
+              onCancelEdit={() => {}}
+              onSaveEdit={() => {}}
+              onRegenerate={() => {}}
+            />
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
+
 export default function App() {
+  const shareToken = useMemo(() => getShareTokenFromPath(), []);
+  const isSharedView = Boolean(shareToken);
   const [theme, setTheme] = useState(getInitialTheme);
   const [currentPage, setCurrentPage] = useState("chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -924,18 +1330,55 @@ export default function App() {
     total_output_tokens: 0,
     total_tokens: 0,
   });
+  const [usageByModel, setUsageByModel] = useState([]);
   const [draft, setDraft] = useState("");
+  const [sessionSearch, setSessionSearch] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [sending, setSending] = useState(false);
+  const [stoppingGeneration, setStoppingGeneration] = useState(false);
+  const [activeStreamId, setActiveStreamId] = useState("");
+  const [streamingResponse, setStreamingResponse] = useState("");
+  const [pinningSessionId, setPinningSessionId] = useState(null);
+  const [sharingSessionId, setSharingSessionId] = useState(null);
+  const [regeneratingMessageId, setRegeneratingMessageId] = useState(null);
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editingDraft, setEditingDraft] = useState("");
+  const [savingEditMessageId, setSavingEditMessageId] = useState(null);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState("");
+  const [sharedChat, setSharedChat] = useState(null);
+  const [shareNotFound, setShareNotFound] = useState(false);
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
+  const streamAbortRef = useRef(null);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || null,
     [sessions, activeSessionId],
   );
+  const pinnedCount = useMemo(
+    () => sessions.filter((session) => session.is_pinned).length,
+    [sessions],
+  );
+
+  function abortStreamRequest() {
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
+  }
+
+  function resetStreamingState() {
+    setSending(false);
+    setStoppingGeneration(false);
+    setActiveStreamId("");
+    setPendingPrompt("");
+    setStreamingResponse("");
+  }
+
+  function clearEditState() {
+    setEditingMessageId(null);
+    setEditingDraft("");
+    setSavingEditMessageId(null);
+  }
 
   function dismissToast(id) {
     setToasts((current) => current.filter((toast) => toast.id !== id));
@@ -956,6 +1399,25 @@ export default function App() {
     window.localStorage.setItem("ui-theme", theme);
   }, [theme]);
 
+  useEffect(() => () => abortStreamRequest(), []);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) {
+      return undefined;
+    }
+
+    const registerWorker = async () => {
+      try {
+        await navigator.serviceWorker.register("/sw.js");
+      } catch {
+        // Installability support should stay silent if registration fails.
+      }
+    };
+
+    registerWorker();
+    return undefined;
+  }, []);
+
   useEffect(() => {
     syncDocumentBranding(branding);
   }, [branding]);
@@ -963,39 +1425,52 @@ export default function App() {
   useEffect(() => {
     async function bootstrap() {
       try {
-        const [authPayload, modelPayload] = await Promise.all([
-          apiRequest("/api/auth/me/"),
-          apiRequest("/api/models/"),
-        ]);
+        if (isSharedView) {
+          const payload = await apiRequest(`/api/public/chat/${shareToken}/`);
+          setSharedChat(payload);
+          setShareNotFound(false);
+        } else {
+          const [authPayload, modelPayload] = await Promise.all([
+            apiRequest("/api/auth/me/"),
+            apiRequest("/api/models/"),
+          ]);
 
-        setBranding(authPayload.branding || initialBranding);
-        setModels(modelPayload.models || []);
-        if ((modelPayload.models || []).length) {
-          setSelectedModel((current) => current || modelPayload.models[0].key);
-        }
+          setBranding(authPayload.branding || initialBranding);
+          setModels(modelPayload.models || []);
+          if ((modelPayload.models || []).length) {
+            setSelectedModel((current) => current || modelPayload.models[0].key);
+          }
 
-        if (authPayload.authenticated) {
-          setCurrentUser(authPayload.user);
-          await loadWorkspace();
+          if (authPayload.authenticated) {
+            setCurrentUser(authPayload.user);
+            await loadWorkspace();
+          }
         }
       } catch (error) {
-        showToast("Workspace issue", error.message, "error");
+        if (isSharedView) {
+          setShareNotFound(true);
+          setSharedChat(null);
+        } else {
+          showToast("Workspace issue", error.message, "error");
+        }
       } finally {
         setAuthReady(true);
       }
     }
 
     bootstrap();
-  }, []);
+  }, [isSharedView, shareToken]);
 
   async function loadWorkspace() {
-    const [sessionsPayload, usagePayload] = await Promise.all([
+    const [sessionsPayload, usagePayload, usageByModelPayload] = await Promise.all([
       apiRequest("/api/chat/sessions/"),
       apiRequest("/api/usage-stats/"),
+      apiRequest("/api/usage-stats/models/"),
     ]);
 
-    setSessions(sessionsPayload.sessions || []);
+    setSessions(sortSessions(sessionsPayload.sessions || []));
     setUsage(usagePayload);
+    setUsageByModel(usageByModelPayload.models || []);
 
     if ((sessionsPayload.sessions || []).length === 0) {
       setActiveSessionId(null);
@@ -1010,8 +1485,12 @@ export default function App() {
 
   async function refreshUsage() {
     try {
-      const usagePayload = await apiRequest("/api/usage-stats/");
+      const [usagePayload, usageByModelPayload] = await Promise.all([
+        apiRequest("/api/usage-stats/"),
+        apiRequest("/api/usage-stats/models/"),
+      ]);
       setUsage(usagePayload);
+      setUsageByModel(usageByModelPayload.models || []);
     } catch (error) {
       if (error.status !== 401) {
         showToast("Usage unavailable", error.message, "error");
@@ -1020,6 +1499,7 @@ export default function App() {
   }
 
   function resetWorkspace() {
+    abortStreamRequest();
     setSessions([]);
     setActiveSessionId(null);
     setCurrentPage("chat");
@@ -1029,8 +1509,14 @@ export default function App() {
       total_output_tokens: 0,
       total_tokens: 0,
     });
+    setUsageByModel([]);
     setDraft("");
-    setPendingPrompt("");
+    setSessionSearch("");
+    resetStreamingState();
+    setRegeneratingMessageId(null);
+    setPinningSessionId(null);
+    setSharingSessionId(null);
+    clearEditState();
   }
 
   function handleAuthFormChange(event) {
@@ -1106,6 +1592,10 @@ export default function App() {
   }
 
   async function handleSelectSession(sessionId) {
+    if (sending) {
+      return;
+    }
+
     setLoadingConversation(true);
 
     try {
@@ -1115,6 +1605,7 @@ export default function App() {
         setActiveSessionId(payload.session.id);
         setSelectedModel(payload.session.model);
         setMessages(payload.messages || []);
+        clearEditState();
       });
     } catch (error) {
       showToast("Unable to open chat", error.message, "error");
@@ -1124,6 +1615,10 @@ export default function App() {
   }
 
   async function handleDeleteSession(sessionId) {
+    if (sending) {
+      return;
+    }
+
     const confirmed = window.confirm("Delete this chat permanently?");
     if (!confirmed) {
       return;
@@ -1135,10 +1630,11 @@ export default function App() {
       });
 
       const remainingSessions = sessions.filter((session) => session.id !== sessionId);
-      setSessions(remainingSessions);
+      setSessions(sortSessions(remainingSessions));
       if (activeSessionId === sessionId) {
         setActiveSessionId(null);
         setMessages([]);
+        clearEditState();
       }
       await refreshUsage();
       showToast("Chat deleted", "The conversation was removed.", "success");
@@ -1148,18 +1644,25 @@ export default function App() {
   }
 
   function handleNewChat() {
+    if (sending) {
+      return;
+    }
+
     setCurrentPage("chat");
     setSidebarOpen(false);
     setActiveSessionId(null);
     setMessages([]);
-    setPendingPrompt("");
+    resetStreamingState();
+    clearEditState();
     showToast("New chat", "Start a fresh private conversation.", "info");
   }
 
   function handleDraftKeyDown(event) {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
-      event.currentTarget.form?.requestSubmit();
+      if (!sending) {
+        event.currentTarget.form?.requestSubmit();
+      }
     }
   }
 
@@ -1176,12 +1679,26 @@ export default function App() {
       return;
     }
 
+    const streamController = new AbortController();
+    let streamCompleted = false;
+
     setSending(true);
+    setStoppingGeneration(false);
     setPendingPrompt(content);
+    setStreamingResponse("");
+    setDraft("");
+    clearEditState();
+    streamAbortRef.current = streamController;
 
     try {
-      const payload = await apiRequest("/api/chat/", {
+      const response = await fetch("/api/chat/stream/", {
         method: "POST",
+        credentials: "same-origin",
+        signal: streamController.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCsrfToken(),
+        },
         body: JSON.stringify({
           message: content,
           model: activeSession?.model || selectedModel,
@@ -1189,18 +1706,119 @@ export default function App() {
         }),
       });
 
-      setDraft("");
-      setPendingPrompt("");
-      setMessages((current) => [...current, payload.message]);
-      setActiveSessionId(payload.session.id);
-      setSelectedModel(payload.session.model);
-      setSessions((current) => {
-        const deduped = current.filter((session) => session.id !== payload.session.id);
-        return [payload.session, ...deduped];
-      });
-      await refreshUsage();
+      const contentType = response.headers.get("content-type") || "";
+      const errorPayload = contentType.includes("application/json")
+        ? await response.clone().json().catch(() => null)
+        : null;
+
+      if (!response.ok) {
+        const error = new Error(errorPayload?.detail || "Unable to start generation.");
+        error.status = response.status;
+        throw error;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Streaming is unavailable right now.");
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let shouldRefreshUsage = false;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+
+        for (const block of blocks) {
+          if (!block.trim()) {
+            continue;
+          }
+
+          const parsedEvent = parseSseBlock(block);
+          if (!parsedEvent) {
+            continue;
+          }
+
+          const { event, payload } = parsedEvent;
+
+          if (event === "init") {
+            setActiveStreamId(payload.stream_id || "");
+            if (payload.session) {
+              setActiveSessionId(payload.session.id);
+              setSelectedModel(payload.session.model);
+              setSessions((current) => upsertSession(current, payload.session));
+            }
+            continue;
+          }
+
+          if (event === "chunk") {
+            setStreamingResponse((current) => current + (payload.content || ""));
+            continue;
+          }
+
+          if (event === "error") {
+            throw new Error(payload.detail || "Streaming failed.");
+          }
+
+          if (event === "done") {
+            streamCompleted = true;
+            shouldRefreshUsage = Boolean(payload.message);
+
+            if (payload.session) {
+              setActiveSessionId(payload.session.id);
+              setSelectedModel(payload.session.model);
+              setSessions((current) => upsertSession(current, payload.session));
+            } else if (!activeSessionId) {
+              setActiveSessionId(null);
+              setMessages([]);
+            }
+
+            if (payload.message) {
+              setMessages((current) => [...current, payload.message]);
+            }
+
+            if (payload.stopped) {
+              showToast(
+                "Generation stopped",
+                payload.message
+                  ? "The response was stopped and saved up to the last streamed chunk."
+                  : "Generation stopped before any reply was saved.",
+                "info",
+              );
+            }
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const parsedEvent = parseSseBlock(buffer);
+        if (parsedEvent?.event === "done" && parsedEvent.payload.message) {
+          const { payload } = parsedEvent;
+          streamCompleted = true;
+          setMessages((current) => [...current, payload.message]);
+          if (payload.session) {
+            setActiveSessionId(payload.session.id);
+            setSelectedModel(payload.session.model);
+            setSessions((current) => upsertSession(current, payload.session));
+          }
+          await refreshUsage();
+        }
+      } else if (shouldRefreshUsage) {
+        await refreshUsage();
+      }
     } catch (error) {
-      setPendingPrompt("");
+      if (error.name === "AbortError") {
+        return;
+      }
+
+      setDraft((current) => current || content);
       if (error.status === 401) {
         showToast("Session expired", "Please sign in again to continue chatting.", "error");
         setCurrentUser(null);
@@ -1209,7 +1827,197 @@ export default function App() {
       }
       showToast("Send failed", error.message, "error");
     } finally {
-      setSending(false);
+      if (!streamCompleted) {
+        setStreamingResponse("");
+      }
+      resetStreamingState();
+      abortStreamRequest();
+    }
+  }
+
+  async function handleStopGeneration() {
+    if (!sending || !activeStreamId || stoppingGeneration) {
+      return;
+    }
+
+    setStoppingGeneration(true);
+
+    try {
+      await apiRequest(`/api/chat/streams/${activeStreamId}/stop/`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    } catch (error) {
+      setStoppingGeneration(false);
+      showToast("Stop failed", error.message, "error");
+    }
+  }
+
+  async function handleTogglePin(session) {
+    if (!session?.id || sending || pinningSessionId) {
+      return;
+    }
+
+    setPinningSessionId(session.id);
+
+    try {
+      const payload = await apiRequest(`/api/chat/sessions/${session.id}/pin/`, {
+        method: "POST",
+        body: JSON.stringify({ pinned: !session.is_pinned }),
+      });
+
+      setSessions((current) => upsertSession(current, payload.session));
+      showToast(
+        payload.session.is_pinned ? "Chat pinned" : "Chat unpinned",
+        payload.session.is_pinned
+          ? "This conversation will stay near the top of your sidebar."
+          : "This conversation is back in normal chat order.",
+        "success",
+      );
+    } catch (error) {
+      showToast("Pin update failed", error.message, "error");
+    } finally {
+      setPinningSessionId(null);
+    }
+  }
+
+  function handleStartEdit(message) {
+    if (!message?.id || sending || regeneratingMessageId || savingEditMessageId) {
+      return;
+    }
+
+    setEditingMessageId(message.id);
+    setEditingDraft(message.user_message);
+  }
+
+  function handleCancelEdit() {
+    clearEditState();
+  }
+
+  async function handleSaveEditedMessage(message) {
+    if (!activeSessionId || !message?.id || !editingMessageId) {
+      return;
+    }
+
+    const content = editingDraft.trim();
+    if (!content) {
+      showToast("Message required", "Edited message cannot be empty.", "error");
+      return;
+    }
+
+    setSavingEditMessageId(message.id);
+
+    try {
+      const payload = await apiRequest(
+        `/api/chat/sessions/${activeSessionId}/messages/${message.id}/edit/`,
+        {
+          method: "POST",
+          body: JSON.stringify({ message: content }),
+        },
+      );
+
+      setMessages(payload.messages || []);
+      setSessions((current) => upsertSession(current, payload.session));
+      await refreshUsage();
+      clearEditState();
+      showToast(
+        "Message updated",
+        payload.removed_count
+          ? "The edited reply was regenerated and later messages were cleared to keep the chat consistent."
+          : "The message was updated and regenerated successfully.",
+        "success",
+      );
+    } catch (error) {
+      if (error.status === 401) {
+        showToast("Session expired", "Please sign in again to continue chatting.", "error");
+        setCurrentUser(null);
+        resetWorkspace();
+        return;
+      }
+      showToast("Edit failed", error.message, "error");
+    } finally {
+      setSavingEditMessageId(null);
+    }
+  }
+
+  async function handleToggleShare() {
+    if (!activeSession || sharingSessionId || sending) {
+      return;
+    }
+
+    setSharingSessionId(activeSession.id);
+
+    try {
+      const payload = await apiRequest(`/api/chat/sessions/${activeSession.id}/share/`, {
+        method: "POST",
+        body: JSON.stringify({ is_public: !activeSession.is_public }),
+      });
+
+      setSessions((current) => upsertSession(current, payload.session));
+
+      if (payload.session.is_public && payload.session.share_url) {
+        try {
+          await copyText(buildAbsoluteUrl(payload.session.share_url));
+          showToast("Chat shared", "Public read-only link copied to clipboard.", "success");
+        } catch {
+          showToast("Chat shared", "Public read-only link is ready to copy.", "success");
+        }
+      } else {
+        showToast("Sharing disabled", "This conversation is private again.", "info");
+      }
+    } catch (error) {
+      showToast("Share update failed", error.message, "error");
+    } finally {
+      setSharingSessionId(null);
+    }
+  }
+
+  async function handleCopyShareLink() {
+    if (!activeSession?.share_url) {
+      return;
+    }
+
+    try {
+      await copyText(buildAbsoluteUrl(activeSession.share_url));
+      showToast("Link copied", "The public read-only chat link is in your clipboard.", "success");
+    } catch {
+      showToast("Copy failed", "Unable to copy the share link right now.", "error");
+    }
+  }
+
+  async function handleRegenerateMessage(message) {
+    if (!activeSessionId || !message?.id || regeneratingMessageId || sending) {
+      return;
+    }
+
+    clearEditState();
+    setRegeneratingMessageId(message.id);
+
+    try {
+      const payload = await apiRequest(
+        `/api/chat/sessions/${activeSessionId}/messages/${message.id}/regenerate/`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+
+      setMessages((current) =>
+        current.map((item) => (item.id === payload.message.id ? payload.message : item)),
+      );
+      setSessions((current) => upsertSession(current, payload.session));
+      await refreshUsage();
+      showToast("Response regenerated", "A fresh AI reply was generated.", "success");
+    } catch (error) {
+      if (error.status === 401) {
+        showToast("Session expired", "Please sign in again to continue chatting.", "error");
+        setCurrentUser(null);
+        resetWorkspace();
+        return;
+      }
+      showToast("Regenerate failed", error.message, "error");
+    } finally {
+      setRegeneratingMessageId(null);
     }
   }
 
@@ -1221,6 +2029,21 @@ export default function App() {
           <h1>{branding.website_name}</h1>
         </div>
       </div>
+    );
+  }
+
+  if (isSharedView) {
+    return (
+      <>
+        <ToastViewport toasts={toasts} onDismiss={dismissToast} />
+        <SharedChatPage
+          branding={branding}
+          sharePayload={sharedChat}
+          shareNotFound={shareNotFound}
+          theme={theme}
+          onThemeToggle={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+        />
+      </>
     );
   }
 
@@ -1260,6 +2083,10 @@ export default function App() {
             activeSessionId={activeSessionId}
             currentPage={currentPage}
             sidebarOpen={sidebarOpen}
+            searchValue={sessionSearch}
+            busy={sending || Boolean(regeneratingMessageId)}
+            pinnedCount={pinnedCount}
+            pinningSessionId={pinningSessionId}
             onNewChat={handleNewChat}
             onClose={() => setSidebarOpen(false)}
             onOpenChats={() => {
@@ -1270,10 +2097,12 @@ export default function App() {
               setCurrentPage("profile");
               setSidebarOpen(false);
             }}
+            onSearchChange={(event) => setSessionSearch(event.target.value)}
             onSelect={(sessionId) => {
               setSidebarOpen(false);
               return handleSelectSession(sessionId);
             }}
+            onTogglePin={handleTogglePin}
             onDelete={handleDeleteSession}
           />
 
@@ -1301,6 +2130,30 @@ export default function App() {
               </div>
 
               <div className="workspace-actions">
+                {currentPage === "chat" && activeSession ? (
+                  <>
+                    <button
+                      className={`secondary-button icon-button ${activeSession.is_public ? "is-active" : ""}`}
+                      type="button"
+                      onClick={handleToggleShare}
+                      title={activeSession.is_public ? "Make chat private" : "Create public read-only link"}
+                      aria-label={activeSession.is_public ? "Make chat private" : "Create public read-only link"}
+                      disabled={Boolean(sharingSessionId)}
+                    >
+                      <i className={`bi ${sharingSessionId ? "bi-arrow-repeat" : activeSession.is_public ? "bi-globe2" : "bi-lock-fill"}`} />
+                    </button>
+                    <button
+                      className="secondary-button icon-button"
+                      type="button"
+                      onClick={handleCopyShareLink}
+                      title="Copy share link"
+                      aria-label="Copy share link"
+                      disabled={!activeSession.is_public || !activeSession.share_url}
+                    >
+                      <i className="bi bi-link-45deg" />
+                    </button>
+                  </>
+                ) : null}
                 <ThemeToggle
                   theme={theme}
                   onToggle={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
@@ -1318,17 +2171,27 @@ export default function App() {
             </header>
 
             {currentPage === "profile" ? (
-              <ProfilePage currentUser={currentUser} usage={usage} sessions={sessions} />
+              <ProfilePage currentUser={currentUser} usage={usage} usageByModel={usageByModel} sessions={sessions} theme={theme} />
             ) : (
               <>
                 <section className="conversation-panel">
-                  <MessageList
-                    branding={branding}
-                    messages={messages}
-                    pendingPrompt={pendingPrompt}
-                    loadingConversation={loadingConversation}
-                  />
-                </section>
+                <MessageList
+                  branding={branding}
+                  messages={messages}
+                  pendingPrompt={pendingPrompt}
+                  streamingResponse={streamingResponse}
+                  loadingConversation={loadingConversation}
+                  editingMessageId={editingMessageId}
+                  editingDraft={editingDraft}
+                  regeneratingMessageId={regeneratingMessageId}
+                  savingEditMessageId={savingEditMessageId}
+                  onEditDraftChange={(event) => setEditingDraft(event.target.value)}
+                  onStartEdit={handleStartEdit}
+                  onCancelEdit={handleCancelEdit}
+                  onSaveEdit={handleSaveEditedMessage}
+                  onRegenerate={handleRegenerateMessage}
+                />
+              </section>
 
                 <ChatComposer
                   draft={draft}
@@ -1336,10 +2199,12 @@ export default function App() {
                   models={models}
                   isLocked={Boolean(activeSession)}
                   sending={sending}
+                  stoppingGeneration={stoppingGeneration}
                   onDraftChange={(event) => setDraft(event.target.value)}
                   onDraftKeyDown={handleDraftKeyDown}
                   onModelChange={(event) => setSelectedModel(event.target.value)}
                   onSubmit={handleSendMessage}
+                  onStop={handleStopGeneration}
                 />
               </>
             )}

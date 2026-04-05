@@ -14,6 +14,9 @@ class ChatSession(models.Model):
     )
     model = models.CharField(max_length=100)
     title = models.CharField(max_length=100)
+    is_pinned = models.BooleanField(default=False)
+    is_public = models.BooleanField(default=False)
+    share_token = models.CharField(max_length=64, blank=True, null=True, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

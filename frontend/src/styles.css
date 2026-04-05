@@ -383,6 +383,7 @@ p {
   background: var(--surface-muted);
   color: var(--text);
   border: 1px solid var(--border);
+  text-decoration: none;
 }
 
 .icon-button {
@@ -623,6 +624,42 @@ p {
   gap: 8px;
 }
 
+.sidebar-search {
+  position: relative;
+  display: block;
+}
+
+.sidebar-search i {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 0.84rem;
+  pointer-events: none;
+}
+
+.sidebar-search input {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px 0 38px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--text);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+:root[data-theme="dark"] .sidebar-search input {
+  background: rgba(16, 23, 32, 0.82);
+}
+
+.sidebar-search input:focus {
+  outline: none;
+  border-color: rgba(23, 89, 74, 0.28);
+  box-shadow: 0 0 0 4px rgba(23, 89, 74, 0.08);
+}
+
 .nav-chip {
   display: inline-flex;
   align-items: center;
@@ -697,6 +734,7 @@ p {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .session-title {
@@ -721,7 +759,6 @@ p {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  align-self: start;
   width: 40px;
   height: 40px;
   padding: 0;
@@ -733,6 +770,41 @@ p {
 
 .session-delete i {
   font-size: 0.85rem;
+  line-height: 1;
+}
+
+.session-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.session-pin.active {
+  color: var(--accent);
+}
+
+.session-pin:hover {
+  background: transparent;
+  color: var(--accent);
+  transform: none;
+}
+
+.session-pin i {
+  font-size: 1rem;
   line-height: 1;
 }
 
@@ -784,6 +856,12 @@ p {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.workspace-actions .icon-button.is-active {
+  color: var(--accent);
+  border-color: rgba(23, 89, 74, 0.28);
+  background: rgba(23, 89, 74, 0.08);
 }
 
 .overview-label {
@@ -882,6 +960,28 @@ p {
   letter-spacing: -0.05em;
 }
 
+.usage-model-panel {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+:root[data-theme="dark"] .usage-model-panel {
+  background: rgba(16, 23, 32, 0.82);
+}
+
+.usage-chart-shell {
+  margin-top: 16px;
+  min-height: 280px;
+}
+
+.usage-chart-shell canvas {
+  width: 100% !important;
+  height: 280px !important;
+}
+
 .conversation-panel {
   flex: 1 1 0;
   min-height: 0;
@@ -933,10 +1033,76 @@ p {
   font-family: "IBM Plex Mono", monospace;
 }
 
+.message-meta,
+.message-edit-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.message-action {
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(23, 89, 74, 0.08);
+  color: var(--accent);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition: background 0.2s ease, transform 0.18s ease, opacity 0.2s ease;
+}
+
+.message-action:hover {
+  transform: translateY(-1px);
+  background: rgba(23, 89, 74, 0.14);
+}
+
+.message-action:disabled {
+  opacity: 0.72;
+  cursor: wait;
+  transform: none;
+}
+
+.message-action i {
+  font-size: 0.76rem;
+  line-height: 1;
+}
+
 .message-body {
   white-space: pre-wrap;
   line-height: 1.72;
   font-size: 0.93rem;
+}
+
+.message-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message-edit-form textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .message-edit-form textarea {
+  background: rgba(10, 16, 24, 0.9);
+}
+
+.message-edit-form textarea:focus {
+  outline: none;
+  border-color: rgba(23, 89, 74, 0.35);
+  box-shadow: 0 0 0 4px rgba(23, 89, 74, 0.08);
 }
 
 .assistant-content {
@@ -1010,6 +1176,77 @@ p {
 
 .message-code-pre code {
   font: inherit;
+  display: block;
+  min-width: 100%;
+}
+
+.message-code-pre .hljs {
+  background: transparent;
+  color: #e6edf7;
+}
+
+.message-code-pre .hljs-comment,
+.message-code-pre .hljs-quote {
+  color: #7f93ac;
+  font-style: italic;
+}
+
+.message-code-pre .hljs-keyword,
+.message-code-pre .hljs-selector-tag,
+.message-code-pre .hljs-subst {
+  color: #ff8fb1;
+}
+
+.message-code-pre .hljs-string,
+.message-code-pre .hljs-title,
+.message-code-pre .hljs-section,
+.message-code-pre .hljs-attribute,
+.message-code-pre .hljs-meta-string {
+  color: #9ce2a1;
+}
+
+.message-code-pre .hljs-number,
+.message-code-pre .hljs-literal,
+.message-code-pre .hljs-symbol,
+.message-code-pre .hljs-bullet {
+  color: #ffd479;
+}
+
+.message-code-pre .hljs-built_in,
+.message-code-pre .hljs-type,
+.message-code-pre .hljs-class .hljs-title,
+.message-code-pre .hljs-function .hljs-title {
+  color: #7fd7ff;
+}
+
+.message-code-pre .hljs-variable,
+.message-code-pre .hljs-template-variable,
+.message-code-pre .hljs-name,
+.message-code-pre .hljs-selector-id,
+.message-code-pre .hljs-selector-class {
+  color: #f6c177;
+}
+
+.message-code-pre .hljs-tag {
+  color: #89ddff;
+}
+
+.message-code-pre .hljs-tag .hljs-name,
+.message-code-pre .hljs-tag .hljs-attr {
+  color: #ff8fb1;
+}
+
+.message-code-pre .hljs-regexp,
+.message-code-pre .hljs-link {
+  color: #86efcb;
+}
+
+.message-code-pre .hljs-emphasis {
+  font-style: italic;
+}
+
+.message-code-pre .hljs-strong {
+  font-weight: 700;
 }
 
 .message-empty {
@@ -1137,6 +1374,14 @@ p {
   height: 52px;
   padding-inline: 18px;
   flex: 0 0 auto;
+}
+
+.composer-button.stop-button {
+  background: linear-gradient(180deg, #8b3a3a, #7a2828);
+}
+
+.shared-shell {
+  grid-template-columns: 1fr;
 }
 
 .composer-help {
@@ -1300,6 +1545,7 @@ p {
     flex-direction: row;
     align-items: center;
     justify-content: flex-end;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
@@ -1323,6 +1569,12 @@ p {
     font-size: clamp(1.05rem, 6vw, 1.65rem);
     line-height: 1.08;
     margin-bottom: 4px;
+  }
+
+  .message-meta,
+  .message-edit-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .panel-topline {
@@ -1369,6 +1621,12 @@ p {
     height: 38px;
     justify-self: end;
     align-self: start;
+  }
+
+  .session-pin {
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
   }
 
   .composer-button {
