@@ -4,9 +4,10 @@ import hashlib
 from functools import wraps
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
-from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.template.loader import render_to_string
+from django.templatetags.static import static
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
@@ -76,9 +77,12 @@ def ensure_document_file_hash(document):
         return document.file_hash
 
     digest = hashlib.sha256()
-    with document.file.open("rb") as stored_file:
-        for chunk in iter(lambda: stored_file.read(8192), b""):
-            digest.update(chunk)
+    try:
+        with document.file.open("rb") as stored_file:
+            for chunk in iter(lambda: stored_file.read(8192), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
     document.file_hash = digest.hexdigest()
     document.save(update_fields=["file_hash"])
     return document.file_hash
@@ -188,6 +192,13 @@ def app_shell(request, share_token=None):
             "website_favicon": branding.get("website_favicon") or "",
         },
     )
+
+
+@require_GET
+def favicon(request):
+    branding = get_website_branding()
+    favicon_url = branding.get("website_favicon") or static("frontend/pwa-icon.svg")
+    return HttpResponseRedirect(favicon_url)
 
 
 @require_GET

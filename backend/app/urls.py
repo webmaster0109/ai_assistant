@@ -4,6 +4,7 @@ from . import views
 
 urlpatterns = [
     path('', views.app_shell, name='app_shell'),
+    path('favicon.ico', views.favicon, name='favicon'),
     path('share/<str:share_token>/', views.app_shell, name='shared_app_shell'),
     path('sw.js', views.service_worker, name='service_worker'),
     path('manifest.webmanifest', views.web_manifest, name='web_manifest'),

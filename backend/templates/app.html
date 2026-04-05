@@ -22,12 +22,13 @@
     <link
       id="app-favicon"
       rel="icon"
+      type="{% if website_favicon %}image/x-icon{% else %}image/svg+xml{% endif %}"
       href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}"
     />
     <link
       rel="shortcut icon"
       href="{% if website_favicon %}{{ website_favicon }}{% else %}{% static 'frontend/pwa-icon.svg' %}{% endif %}"
-      type="image/x-icon"
+      type="{% if website_favicon %}image/x-icon{% else %}image/svg+xml{% endif %}"
     />
     <link
       rel="stylesheet"

@@ -1,4 +1,5 @@
 import os
+import tempfile
 from pathlib import Path
 from urllib.parse import urlparse, parse_qsl
 
@@ -196,5 +197,8 @@ STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'static'),
 ]
 
-MEDIA_ROOT = os.path.join(BASE_DIR, "public/static")
+DEFAULT_MEDIA_ROOT = os.path.join(BASE_DIR, "public/static")
+SERVERLESS_MEDIA_ROOT = os.path.join(tempfile.gettempdir(), "ollama_ai_media")
+USE_SERVERLESS_MEDIA_ROOT = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+MEDIA_ROOT = os.getenv("MEDIA_ROOT") or (SERVERLESS_MEDIA_ROOT if USE_SERVERLESS_MEDIA_ROOT else DEFAULT_MEDIA_ROOT)
 MEDIA_URL = '/media/'
