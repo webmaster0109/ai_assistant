@@ -177,7 +177,7 @@ def ordered_sessions_for_user(user):
 
 @ensure_csrf_cookie
 @require_GET
-def app_shell(request):
+def app_shell(request, share_token=None):
     branding = get_website_branding()
     return render(
         request,
