@@ -3,11 +3,12 @@ from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 # from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.messages import SystemMessage
-from .ollama import load_models
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from .ollama import load_models, ollama_client
 import os
 import json
 import uuid
+import base64
 from dotenv import load_dotenv
 from .models import ChatConversations
 from .utils import get_system_prompt
@@ -99,6 +100,48 @@ def create_llm(model_key, temperature=0.7, num_predict=4096, num_ctx=8192):
       num_ctx=num_ctx,
   )
 
+def encode_file_as_base64(file_field):
+  if not file_field:
+    return ""
+
+  with file_field.open("rb") as stored_file:
+    return base64.b64encode(stored_file.read()).decode("utf-8")
+
+def history_to_ollama_messages(history_messages):
+  messages = []
+  for item in history_messages or []:
+    if isinstance(item, SystemMessage):
+      role = "system"
+    elif isinstance(item, AIMessage):
+      role = "assistant"
+    else:
+      role = "user"
+
+    content = item.content
+    if isinstance(content, list):
+      content = "\n".join(
+        part.get("text", "")
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text"
+      )
+    messages.append({
+      "role": role,
+      "content": str(content or ""),
+    })
+  return messages
+
+def extract_usage_from_ollama_payload(payload):
+  if not isinstance(payload, dict):
+    return {
+      "input_tokens": 0,
+      "output_tokens": 0,
+    }
+
+  return {
+    "input_tokens": payload.get("prompt_eval_count", 0) or 0,
+    "output_tokens": payload.get("eval_count", 0) or 0,
+  }
+
 def extract_json_payload(content: str):
   text = str(content or "").strip()
   if not text:
@@ -125,31 +168,123 @@ def extract_json_payload(content: str):
 
   raise ValueError("The model did not return valid JSON.")
 
+def sanitize_json_text(text: str) -> str:
+  source = str(text or "").strip()
+  if not source:
+    return source
+
+  return re.sub(r",(\s*[}\]])", r"\1", source)
+
 def invoke_json_generation(model_key, system_prompt: str, user_prompt: str, temperature=0.4):
   llm = create_llm(model_key, temperature=temperature, num_predict=3072, num_ctx=8192)
   prompt = ChatPromptTemplate.from_messages([
       ("system", system_prompt),
+      MessagesPlaceholder(variable_name="history"),
       ("human", "{input}"),
   ])
   chain = prompt | llm
-  result = chain.invoke({"input": user_prompt})
-  return extract_json_payload(result.content)
+  history = []
+  current_input = user_prompt
+  last_error = None
 
-def normalize_quiz_questions(payload, question_count: int):
+  for attempt in range(3):
+    result = chain.invoke({
+      "input": current_input,
+      "history": history,
+    })
+    raw_content = str(result.content or "").strip()
+
+    try:
+      return extract_json_payload(raw_content)
+    except (json.JSONDecodeError, ValueError) as error:
+      last_error = error
+
+      try:
+        repaired_payload = extract_json_payload(sanitize_json_text(raw_content))
+        return repaired_payload
+      except (json.JSONDecodeError, ValueError):
+        pass
+
+      history.extend([
+        AIMessage(content=raw_content),
+        HumanMessage(
+          content=
+            "Your previous reply was not valid JSON. "
+            f"Parser error: {error}. "
+            "Return the same answer again as strict valid JSON only. "
+            "Do not add markdown fences, comments, or explanation text."
+        ),
+      ])
+      current_input = "Return strict valid JSON only."
+      continue
+
+  raise ValueError(f"The model returned invalid JSON after multiple attempts: {last_error}")
+
+def normalize_option_map(options):
+  if isinstance(options, dict):
+    normalized = {}
+    for key, value in options.items():
+      normalized[str(key).strip().upper()[:1]] = str(value or "").strip()
+    return normalized
+
+  if isinstance(options, (list, tuple)):
+    labels = ("A", "B", "C", "D")
+    return {
+      label: str(value or "").strip()
+      for label, value in zip(labels, options[:4])
+    }
+
+  return {}
+
+def resolve_correct_option(raw_value, option_map):
+  value = str(raw_value or "").strip()
+  if not value:
+    return ""
+
+  letter_match = re.search(r"\b([A-D])\b", value.upper())
+  if letter_match:
+    return letter_match.group(1)
+
+  lowered_value = value.casefold()
+  for label, option_text in option_map.items():
+    if lowered_value == str(option_text or "").strip().casefold():
+      return label
+
+  return ""
+
+def normalize_quiz_questions(payload, question_count: int, strict=True):
   questions = payload.get("questions") if isinstance(payload, dict) else payload
   if not isinstance(questions, list):
     raise ValueError("Quiz questions were not returned in the expected format.")
 
   normalized = []
   for index, item in enumerate(questions[:question_count], start=1):
-    options = item.get("options") or {}
+    options = normalize_option_map(
+      item.get("options")
+      or item.get("choices")
+      or item.get("answers")
+      or {}
+    )
+    option_a = str(options.get("A") or item.get("option_a") or "").strip()
+    option_b = str(options.get("B") or item.get("option_b") or "").strip()
+    option_c = str(options.get("C") or item.get("option_c") or "").strip()
+    option_d = str(options.get("D") or item.get("option_d") or "").strip()
+    resolved_options = {
+      "A": option_a,
+      "B": option_b,
+      "C": option_c,
+      "D": option_d,
+    }
     normalized.append({
       "question_text": str(item.get("question") or item.get("question_text") or "").strip(),
-      "option_a": str(options.get("A") or item.get("option_a") or "").strip(),
-      "option_b": str(options.get("B") or item.get("option_b") or "").strip(),
-      "option_c": str(options.get("C") or item.get("option_c") or "").strip(),
-      "option_d": str(options.get("D") or item.get("option_d") or "").strip(),
-      "correct_option": str(item.get("correct_option") or "").strip().upper()[:1],
+      "option_a": option_a,
+      "option_b": option_b,
+      "option_c": option_c,
+      "option_d": option_d,
+      "correct_option": resolve_correct_option(
+        item.get("correct_option") or item.get("answer") or item.get("correct_answer") or "",
+        resolved_options,
+      ),
       "explanation": str(item.get("explanation") or "").strip(),
       "sort_order": index,
     })
@@ -166,41 +301,90 @@ def normalize_quiz_questions(payload, question_count: int):
     ):
       valid.append(item)
 
-  if len(valid) < question_count:
+  if strict and len(valid) < question_count:
     raise ValueError("The quiz generator returned incomplete questions. Please try again.")
 
   return valid
 
-def generate_quiz_questions(model_key: str, topic: str, question_count=5, previous_questions=None):
+def generate_quiz_questions(model_key: str, topic: str, difficulty_level="beginner", question_count=5, previous_questions=None):
   previous_questions = [str(item).strip() for item in (previous_questions or []) if str(item).strip()]
-  variation_tag = uuid.uuid4().hex[:8]
-  payload = invoke_json_generation(
-    model_key,
-    (
-      "Create a multiple-choice quiz in strict JSON only. "
-      "Return an object with a single key named questions. "
-      "Each question must include: question, options with keys A/B/C/D, correct_option, explanation. "
-      "Make the quiz practical, beginner-friendly, and accurate. "
-      "Do not include markdown or prose outside JSON."
-    ),
-    (
-      f"Topic: {topic}\n"
-      f"Question count: {question_count}\n"
-      f"Variation tag: {variation_tag}\n"
-      + (
-        "Avoid repeating any of these older questions or their close paraphrases:\n"
-        + "\n".join(f"- {item}" for item in previous_questions[:30])
-        + "\n"
-        if previous_questions else ""
-      )
-      + "Keep each option concise and make only one answer correct. "
-        "Use fresh angles, examples, and wording for this new quiz."
-    ),
-    temperature=0.35,
-  )
-  return normalize_quiz_questions(payload, question_count)
+  collected = []
+  seen_questions = set()
+  normalized_level = str(difficulty_level or "beginner").strip().lower()
+  level_guidance = {
+    "beginner": "Use very clear wording, foundational concepts, and straightforward examples.",
+    "intermediate": "Use practical scenarios and combine related concepts without becoming overly tricky.",
+    "advanced": "Use deeper reasoning, edge cases, and stronger conceptual comparisons.",
+    "master": "Use expert-level tradeoffs, architecture thinking, and non-obvious pitfalls.",
+    "enterprises mastery": "Use enterprise-scale scenarios, production constraints, maintainability, security, scalability, and team-level decision making.",
+  }.get(normalized_level, "Use practical, accurate questions that match the requested difficulty.")
+
+  for attempt in range(4):
+    remaining = question_count - len(collected)
+    if remaining <= 0:
+      break
+
+    variation_tag = uuid.uuid4().hex[:8]
+    avoided_questions = previous_questions + [item["question_text"] for item in collected]
+    payload = invoke_json_generation(
+      model_key,
+      (
+        "Create a multiple-choice quiz in strict JSON only. "
+        "Return an object with a single key named questions. "
+        "Return exactly the requested number of questions. "
+        "Each question must include: question, options with keys A/B/C/D, correct_option, explanation. "
+        "Make the quiz practical, level-appropriate, and accurate. "
+        "Do not include markdown or prose outside JSON."
+      ),
+      (
+        f"Topic: {topic}\n"
+        f"Difficulty level: {normalized_level}\n"
+        f"Question count: {remaining}\n"
+        f"Variation tag: {variation_tag}\n"
+        + (
+          "Avoid repeating any of these older questions or their close paraphrases:\n"
+          + "\n".join(f"- {item}" for item in avoided_questions[:40])
+          + "\n"
+          if avoided_questions else ""
+        )
+        + f"Level guidance: {level_guidance}\n"
+        + "Keep each option concise and make only one answer correct. "
+          "Use fresh angles, examples, and wording for this new quiz."
+      ),
+      temperature=0.35,
+    )
+
+    normalized_batch = normalize_quiz_questions(payload, remaining, strict=False)
+    for item in normalized_batch:
+      question_key = item["question_text"].casefold()
+      if not question_key or question_key in seen_questions:
+        continue
+      seen_questions.add(question_key)
+      collected.append(item)
+      if len(collected) >= question_count:
+        break
+
+  if len(collected) < question_count:
+    if len(collected) >= 3:
+      question_count = len(collected)
+    else:
+      raise ValueError("Unable to generate a complete quiz right now. Please try again.")
+
+  for index, item in enumerate(collected[:question_count], start=1):
+    item["sort_order"] = index
+
+  return collected[:question_count]
 
 def generate_learning_path(model_key: str, goal: str, experience_level: str, weekly_hours: str, timeline: str):
+  normalized_level = str(experience_level or "beginner").strip().lower()
+  level_guidance = {
+    "beginner": "Assume the learner needs strong fundamentals, simple sequencing, clear milestones, and low-friction first projects.",
+    "intermediate": "Assume the learner knows the basics and needs practical depth, stronger exercises, and project-based progression.",
+    "advanced": "Assume the learner already has solid experience and needs deeper concepts, tradeoffs, optimization, and harder deliverables.",
+    "master": "Assume the learner is highly skilled and wants expert mastery, nuanced decision making, architecture thinking, and research-level refinement.",
+    "enterprises mastery": "Assume the learner wants enterprise-grade mastery with production systems, scale, reliability, governance, collaboration, and business-aware execution.",
+  }.get(normalized_level, "Keep the roadmap aligned with the selected level.")
+
   payload = invoke_json_generation(
     model_key,
     (
@@ -212,10 +396,11 @@ def generate_learning_path(model_key: str, goal: str, experience_level: str, wee
     ),
     (
       f"Learning goal: {goal}\n"
-      f"Experience level: {experience_level or 'Not specified'}\n"
+      f"Experience level: {normalized_level or 'Not specified'}\n"
       f"Weekly hours available: {weekly_hours or 'Not specified'}\n"
       f"Preferred timeline: {timeline or 'Not specified'}\n"
-      "Keep the roadmap practical, milestone-based, and realistic."
+      f"Level guidance: {level_guidance}\n"
+      "Keep the roadmap practical, milestone-based, realistic, and clearly matched to the selected level."
     ),
     temperature=0.4,
   )
@@ -249,21 +434,178 @@ def generate_learning_path(model_key: str, goal: str, experience_level: str, wee
     ],
   }
 
-def build_chat_system_prompt(base_prompt: str, document_context: str = "") -> str:
-  if not document_context:
-    return base_prompt
-
-  return (
-    f"{base_prompt}\n\n"
-    "The user has uploaded a PDF for this chat. Use the document context below when answering. "
-    "If the answer is not supported by the document context, say that clearly instead of inventing details.\n\n"
-    f"Document context:\n{document_context}"
+def generate_roast_analysis(model_key: str, content_type: str, content: str, language: str = "english", improvement_goal: str = ""):
+  normalized_type = str(content_type or "auto").strip().lower()
+  normalized_language = str(language or "english").strip().lower()
+  language_instruction = {
+    "english": "Write the roast, suggestions, and improved version fully in natural English.",
+    "hindi": "Write the roast, suggestions, and improved version fully in natural Hindi only.",
+    "nepali": "Write the roast, suggestions, and improved version fully in natural Nepali only.",
+  }.get(normalized_language, "Write the roast in the requested language.")
+  payload = invoke_json_generation(
+    model_key,
+    (
+      "You are a witty but useful roast assistant. "
+      "Roast the user's text, code, or message in a funny, sharp, non-abusive way. "
+      "Return strict JSON only with keys: title, opening_line, roast_points, improvement_suggestions, improved_version. "
+      "roast_points must be an array of short funny criticisms. "
+      "improvement_suggestions must be an array of concise, practical fixes. "
+      "improved_version must be a cleaner improved rewrite of the user's original content. "
+      "Keep the roast playful, intelligent, and helpful, not hateful or slur-based. "
+      f"{language_instruction} "
+      "Do not include markdown or prose outside JSON."
+    ),
+    (
+      f"Content type: {normalized_type}\n"
+      f"Output language: {normalized_language}\n"
+      f"Improvement goal: {improvement_goal or 'General improvement'}\n"
+      "User content follows:\n"
+      f"{content}"
+    ),
+    temperature=0.65,
   )
 
-def conversation_chain(models, question, session_id="default", history=None):
+  roast_points = [
+    str(item).strip()
+    for item in (payload.get("roast_points") or [])
+    if str(item).strip()
+  ]
+  improvement_suggestions = [
+    str(item).strip()
+    for item in (payload.get("improvement_suggestions") or [])
+    if str(item).strip()
+  ]
+  improved_version = str(payload.get("improved_version") or "").strip()
+
+  if not roast_points or not improvement_suggestions or not improved_version:
+    raise ValueError("The roast generator returned incomplete data. Please try again.")
+
+  return {
+    "title": str(payload.get("title") or "").strip() or "Roast report",
+    "opening_line": str(payload.get("opening_line") or "").strip(),
+    "roast_points": roast_points,
+    "improvement_suggestions": improvement_suggestions,
+    "improved_version": improved_version,
+  }
+
+def generate_fortune_reading(model_key: str, question: str, focus_area: str = "general", language: str = "english"):
+  normalized_focus = str(focus_area or "general").strip().lower()
+  normalized_language = str(language or "english").strip().lower()
+  language_instruction = {
+    "english": "Write the fortune fully in natural English.",
+    "hindi": "Write the fortune fully in natural Hindi only.",
+    "nepali": "Write the fortune fully in natural Nepali only.",
+  }.get(normalized_language, "Write the fortune in the requested language.")
+
+  payload = invoke_json_generation(
+    model_key,
+    (
+      "You are a mystical fortune teller for entertainment only. "
+      "Speak in a magical, atmospheric, playful tone, but stay emotionally safe and non-harmful. "
+      "Never present the reading as factual certainty, medical advice, legal advice, or financial certainty. "
+      "Return strict JSON only with keys: title, opening_line, reading, lucky_signs, guidance_points, closing_line, disclaimer. "
+      "lucky_signs must be an array of short symbolic signs or omens. "
+      "guidance_points must be an array of short practical reflections. "
+      f"{language_instruction} "
+      "Keep it entertaining, imaginative, and clearly fortune-style."
+    ),
+    (
+      f"Focus area: {normalized_focus}\n"
+      f"Output language: {normalized_language}\n"
+      "User's question or concern:\n"
+      f"{question}"
+    ),
+    temperature=0.85,
+  )
+
+  lucky_signs = [
+    str(item).strip()
+    for item in (payload.get("lucky_signs") or [])
+    if str(item).strip()
+  ]
+  guidance_points = [
+    str(item).strip()
+    for item in (payload.get("guidance_points") or [])
+    if str(item).strip()
+  ]
+  reading = str(payload.get("reading") or "").strip()
+
+  if not reading or not lucky_signs or not guidance_points:
+    raise ValueError("The fortune teller returned incomplete data. Please try again.")
+
+  return {
+    "title": str(payload.get("title") or "").strip() or "Mystic reading",
+    "opening_line": str(payload.get("opening_line") or "").strip(),
+    "reading": reading,
+    "lucky_signs": lucky_signs,
+    "guidance_points": guidance_points,
+    "closing_line": str(payload.get("closing_line") or "").strip(),
+    "disclaimer": str(payload.get("disclaimer") or "").strip() or "Entertainment only.",
+  }
+
+def build_chat_system_prompt(base_prompt: str, document_context: str = "", has_image=False) -> str:
+  additions = []
+
+  if has_image:
+    additions.append(
+      "The user may have attached an image for this turn. Use the image carefully and answer from what is visible in it. "
+      "Do not pretend the image is missing if an image has been attached."
+    )
+
+  if document_context:
+    additions.append(
+      "The user has uploaded a PDF for this chat, and the document has already been ingested into the app. "
+      "The context below is a retrieved evidence window from that uploaded PDF, not a claim that only those pages exist. "
+      "Never say that only some pages were uploaded, never ask the user to provide all pages again, and never imply the PDF is only partially available just because the retrieved evidence references specific pages. "
+      "Use the retrieved document evidence to answer accurately. "
+      "If the current evidence window is not enough for a precise answer, say that you need to inspect another section of the already uploaded PDF, not that the user must upload or provide the pages again."
+    )
+
+  if not additions:
+    return base_prompt
+
+  prompt = f"{base_prompt}\n\n" + "\n\n".join(additions)
+  if document_context:
+    prompt += f"\n\nDocument context:\n{document_context}"
+  return prompt
+
+def multimodal_conversation_chain(model_key, question, history=None, system_prompt="", image_attachments=None):
+  client = ollama_client()
+  resolved_history = history.messages if hasattr(history, "messages") else (history or [])
+  messages = [{"role": "system", "content": system_prompt}]
+  messages.extend(history_to_ollama_messages(resolved_history))
+
+  user_message = {
+    "role": "user",
+    "content": question,
+  }
+  images = [
+    encode_file_as_base64(image.file)
+    for image in (image_attachments or [])
+    if getattr(image, "file", None)
+  ]
+  if images:
+    user_message["images"] = images
+  messages.append(user_message)
+
+  response = client.chat(model=load_models(model_key), messages=messages)
+  message = response.get("message") or {}
+  return message.get("content", ""), extract_usage_from_ollama_payload(response)
+
+def conversation_chain(models, question, session_id="default", history=None, image_attachments=None):
   system_prompt = get_system_prompt()
   document_context = build_document_context(session_id, question)
-  resolved_system_prompt = build_chat_system_prompt(system_prompt, document_context)
+  resolved_system_prompt = build_chat_system_prompt(system_prompt, document_context, has_image=bool(image_attachments))
+  resolved_history = history or load_history_from_db(session_id)
+
+  if image_attachments:
+    return multimodal_conversation_chain(
+      models,
+      question,
+      history=resolved_history,
+      system_prompt=resolved_system_prompt,
+      image_attachments=image_attachments,
+    )
 
   prompt = ChatPromptTemplate.from_messages([
       SystemMessage(content=resolved_system_prompt),
@@ -274,7 +616,6 @@ def conversation_chain(models, question, session_id="default", history=None):
   llm = create_llm(models)
 
   chain = prompt | llm
-  resolved_history = history or load_history_from_db(session_id)
 
   result = chain.invoke({
       "input": question,
@@ -324,12 +665,66 @@ def generate_title(question):
   return chain.invoke({"input": question}).content.strip()
 
 
-def conversation_chain_stream(models, question, session_id="default", stream_id=None):
+def conversation_chain_stream(models, question, session_id="default", stream_id=None, image_attachments=None):
     """Stream chunks and emit a final payload with usage and stop status."""
 
     system_prompt = get_system_prompt()
     document_context = build_document_context(session_id, question)
-    resolved_system_prompt = build_chat_system_prompt(system_prompt, document_context)
+    resolved_system_prompt = build_chat_system_prompt(system_prompt, document_context, has_image=bool(image_attachments))
+    history = load_history_from_db(session_id)
+
+    if image_attachments:
+      client = ollama_client()
+      messages = [{"role": "system", "content": resolved_system_prompt}]
+      messages.extend(history_to_ollama_messages(history.messages))
+      user_message = {
+        "role": "user",
+        "content": question,
+      }
+      images = [
+        encode_file_as_base64(image.file)
+        for image in (image_attachments or [])
+        if getattr(image, "file", None)
+      ]
+      if images:
+        user_message["images"] = images
+      messages.append(user_message)
+
+      full_response = ""
+      usage = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+      }
+      stopped = False
+
+      for chunk in client.chat(model=load_models(models), messages=messages, stream=True):
+        if stream_id and should_stop_stream(stream_id):
+          stopped = True
+          break
+
+        message = chunk.get("message") or {}
+        content = message.get("content") or ""
+        if content:
+          full_response += content
+          for piece in iter_stream_chunks(content):
+            yield {
+              "type": "chunk",
+              "content": piece,
+            }
+
+        if chunk.get("done"):
+          usage = extract_usage_from_ollama_payload(chunk)
+
+      if stream_id:
+        clear_stream_stop(stream_id)
+
+      yield {
+        "type": "final",
+        "content": full_response,
+        "usage": usage,
+        "stopped": stopped,
+      }
+      return
     
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=resolved_system_prompt),
@@ -340,7 +735,6 @@ def conversation_chain_stream(models, question, session_id="default", stream_id=
     llm = create_llm(models)
 
     chain = prompt | llm
-    history = load_history_from_db(session_id)
     full_response = ""
     usage = {
       "input_tokens": 0,

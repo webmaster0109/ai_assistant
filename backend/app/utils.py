@@ -31,25 +31,26 @@ def get_website_settings(request):
   return get_website_branding()
 
 def get_website_branding():
-  settings = WebsiteSettings.objects.values(
-    'website_name',
-    'website_description',
-    'website_favicon'
-  ).first()
-  return context_processors(None, settings)
+  instance = WebsiteSettings.objects.first()
+  return context_processors(None, instance)
 
 def context_processors(request, settings):
   if settings is None:
-    instance = WebsiteSettings.objects.create()
-    settings = {
-      'website_name': instance.website_name,
-      'website_description': instance.website_description,
-      'website_favicon': instance.website_favicon.name if instance.website_favicon else None,
-    }
+    settings = WebsiteSettings.objects.create()
+
+  if isinstance(settings, dict):
+    website_name = settings.get('website_name')
+    website_description = settings.get('website_description')
+    website_favicon = (django_settings.MEDIA_URL + settings.get('website_favicon') if settings.get('website_favicon') else None)
+  else:
+    website_name = settings.website_name
+    website_description = settings.website_description
+    website_favicon = settings.website_favicon.url if settings.website_favicon else None
+
   return {
-    'website_name': settings.get('website_name') or "Ollama AI",
-    'website_description': settings.get('website_description') or "A powerful AI chatbot platform built with Django and Ollama API.",
-    'website_favicon': (django_settings.MEDIA_URL + settings.get('website_favicon') if settings.get('website_favicon') else None),
+    'website_name': website_name or "Ollama AI",
+    'website_description': website_description or "A powerful AI chatbot platform built with Django and Ollama API.",
+    'website_favicon': website_favicon,
   }
 
 def usage_stats(user=None):

@@ -1,9 +1,11 @@
 from django.contrib import admin
 
 from .models import (
+    BackgroundJob,
     ChatConversations,
     ChatDocument,
     ChatDocumentChunk,
+    ChatImage,
     ChatSession,
     LearningQuizQuestion,
     LearningQuizSession,
@@ -33,13 +35,20 @@ class ChatDocumentAdmin(admin.ModelAdmin):
         "filename",
         "session",
         "is_active",
+        "processing_status",
         "extracted_characters",
         "uploaded_at",
     )
-    list_filter = ("is_active", "uploaded_at", "session__model", "session__owner")
+    list_filter = ("is_active", "processing_status", "uploaded_at", "session__model", "session__owner")
     search_fields = ("filename", "session__title", "session__owner__username", "file_hash")
     ordering = ("-uploaded_at",)
-    readonly_fields = ("file_hash", "extracted_characters", "uploaded_at")
+    readonly_fields = (
+        "file_hash",
+        "extracted_characters",
+        "processing_status",
+        "processing_error",
+        "uploaded_at",
+    )
 
 
 @admin.register(ChatDocumentChunk)
@@ -60,10 +69,26 @@ class ChatDocumentChunkAdmin(admin.ModelAdmin):
     short_content.short_description = "Content"
 
 
+@admin.register(ChatImage)
+class ChatImageAdmin(admin.ModelAdmin):
+    list_display = (
+        "filename",
+        "session",
+        "content_type",
+        "is_active",
+        "uploaded_at",
+    )
+    list_filter = ("is_active", "uploaded_at", "content_type", "session__model", "session__owner")
+    search_fields = ("filename", "session__title", "session__owner__username", "file_hash")
+    ordering = ("-uploaded_at",)
+    readonly_fields = ("file_hash", "uploaded_at", "content_type")
+
+
 @admin.register(ChatConversations)
 class ChatConversationsAdmin(admin.ModelAdmin):
     list_display = (
         "session",
+        "image_attachment",
         "short_user_message",
         "input_tokens",
         "output_tokens",
@@ -86,13 +111,14 @@ class LearningQuizSessionAdmin(admin.ModelAdmin):
         "topic",
         "owner",
         "model",
+        "difficulty_level",
         "correct_answers",
         "total_questions",
         "completed_at",
         "created_at",
     )
-    list_filter = ("model", "completed_at", "created_at", "owner")
-    search_fields = ("topic", "owner__username", "owner__email")
+    list_filter = ("model", "difficulty_level", "completed_at", "created_at", "owner")
+    search_fields = ("topic", "owner__username", "owner__email", "difficulty_level")
     ordering = ("-created_at",)
 
 
@@ -107,6 +133,31 @@ class LearningQuizQuestionAdmin(admin.ModelAdmin):
         return obj.question_text[:100]
 
     short_question.short_description = "Question"
+
+
+@admin.register(BackgroundJob)
+class BackgroundJobAdmin(admin.ModelAdmin):
+    list_display = (
+        "title",
+        "owner",
+        "kind",
+        "status",
+        "session",
+        "document",
+        "created_at",
+        "finished_at",
+    )
+    list_filter = ("kind", "status", "created_at", "owner")
+    search_fields = ("id", "title", "owner__username", "session__title", "document__filename")
+    ordering = ("-created_at",)
+    readonly_fields = (
+        "payload",
+        "result",
+        "error_message",
+        "created_at",
+        "started_at",
+        "finished_at",
+    )
 
 
 @admin.register(WebsiteSettings)

@@ -10,6 +10,7 @@ MODEL_CATALOG = [
         "provider": "Zhipu",
         "model": "glm-5:cloud",
         "supports_documents": True,
+        "supports_vision": False,
     },
     {
         "key": "glm-4.7",
@@ -17,6 +18,7 @@ MODEL_CATALOG = [
         "provider": "Zhipu",
         "model": "glm-4.7:cloud",
         "supports_documents": False,
+        "supports_vision": False,
     },
     {
         "key": "gemini-3-flash-preview",
@@ -24,6 +26,7 @@ MODEL_CATALOG = [
         "provider": "Google",
         "model": "gemini-3-flash-preview:cloud",
         "supports_documents": True,
+        "supports_vision": True,
     },
     {
         "key": "gpt-oss",
@@ -31,6 +34,7 @@ MODEL_CATALOG = [
         "provider": "OpenAI",
         "model": "gpt-oss:120b-cloud",
         "supports_documents": True,
+        "supports_vision": False,
     },
     {
         "key": "gemma3",
@@ -38,6 +42,15 @@ MODEL_CATALOG = [
         "provider": "Google",
         "model": "gemma3:27b-cloud",
         "supports_documents": False,
+        "supports_vision": True,
+    },
+    {
+        "key": "gemma4",
+        "label": "Gemma 4",
+        "provider": "Google",
+        "model": "gemma4:31b-cloud",
+        "supports_documents": True,
+        "supports_vision": True,
     },
     {
         "key": "qwen3.5",
@@ -45,6 +58,15 @@ MODEL_CATALOG = [
         "provider": "Alibaba",
         "model": "qwen3.5:397b-cloud",
         "supports_documents": True,
+        "supports_vision": True,
+    },
+    {
+        "key": "qwen3-vl",
+        "label": "Qwen 3 VL",
+        "provider": "Alibaba",
+        "model": "qwen3-vl:235b-cloud",
+        "supports_documents": True,
+        "supports_vision": True,
     },
     {
         "key": "kimi-k2.5",
@@ -52,6 +74,7 @@ MODEL_CATALOG = [
         "provider": "Moonshot",
         "model": "kimi-k2.5:cloud",
         "supports_documents": True,
+        "supports_vision": True,
     },
     {
         "key": "deepseek-v3.2",
@@ -59,6 +82,7 @@ MODEL_CATALOG = [
         "provider": "DeepSeek",
         "model": "deepseek-v3.2:cloud",
         "supports_documents": True,
+        "supports_vision": False,
     },
     {
         "key": "deepseek-v3.1",
@@ -66,6 +90,7 @@ MODEL_CATALOG = [
         "provider": "DeepSeek",
         "model": "deepseek-v3.1:671b-cloud",
         "supports_documents": True,
+        "supports_vision": False,
     },
     {
         "key": "nemotron-3-super",
@@ -73,6 +98,7 @@ MODEL_CATALOG = [
         "provider": "NVIDIA",
         "model": "nemotron-3-super",
         "supports_documents": False,
+        "supports_vision": False,
     },
     {
         "key": "minimax-m2.7",
@@ -80,6 +106,7 @@ MODEL_CATALOG = [
         "provider": "MiniMax",
         "model": "minimax-m2.7:cloud",
         "supports_documents": False,
+        "supports_vision": False,
     },
 ]
 
@@ -101,6 +128,7 @@ def list_models():
       "label": item["label"],
       "provider": item["provider"],
       "supports_documents": item.get("supports_documents", False),
+      "supports_vision": item.get("supports_vision", False),
     }
     for item in MODEL_CATALOG
   ]
@@ -109,6 +137,12 @@ def supports_documents(model_key):
   for item in MODEL_CATALOG:
     if item["key"] == model_key:
       return bool(item.get("supports_documents"))
+  return False
+
+def supports_vision(model_key):
+  for item in MODEL_CATALOG:
+    if item["key"] == model_key:
+      return bool(item.get("supports_vision"))
   return False
 
 def conversations(model, message):

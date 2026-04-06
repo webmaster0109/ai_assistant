@@ -22,3 +22,5 @@ django-redis
 langchain-ollama
 dj-database-url
 pypdf
+boto3
+django-storages

@@ -7,9 +7,11 @@ from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 
+from .documents import build_document_context
 from .models import (
     ChatConversations,
     ChatDocument,
+    ChatImage,
     ChatSession,
     LearningQuizQuestion,
     LearningQuizSession,
@@ -333,83 +335,34 @@ class ChatPrivacyTests(TestCase):
         self.assertIn("glm-5", model_names)
         self.assertIn("deepseek-v3.2", model_names)
 
-    @patch(
-        "app.views.generate_quiz_questions",
-        return_value=[
-            {
-                "question_text": "Which QuerySet method fetches one object by primary key?",
-                "option_a": "filter()",
-                "option_b": "get()",
-                "option_c": "all()",
-                "option_d": "values()",
-                "correct_option": "B",
-                "explanation": "get() fetches a single matching object.",
-                "sort_order": 1,
-            },
-            {
-                "question_text": "Which method returns SQL-ready rows as dictionaries?",
-                "option_a": "values()",
-                "option_b": "select_related()",
-                "option_c": "prefetch_related()",
-                "option_d": "first()",
-                "correct_option": "A",
-                "explanation": "values() returns dictionaries of selected fields.",
-                "sort_order": 2,
-            },
-            {
-                "question_text": "Which clause sorts descending?",
-                "option_a": "order_by('name')",
-                "option_b": "order_by('-name')",
-                "option_c": "sort_by('-name')",
-                "option_d": "arrange('-name')",
-                "correct_option": "B",
-                "explanation": "Prefixing with a minus sorts descending.",
-                "sort_order": 3,
-            },
-        ],
-    )
-    def test_learning_quiz_creation_and_scoring(self, mocked_generate_quiz):
+    def test_learning_quiz_creation_returns_background_job_locked_to_gemma4(self):
         self.client.force_login(self.owner)
 
         create_response = self.client.post(
             "/api/learning/quizzes/create/",
             data=json.dumps({
                 "topic": "Django ORM",
-                "model": "glm-5",
+                "difficulty_level": "advanced",
                 "question_count": 3,
             }),
             content_type="application/json",
         )
 
-        self.assertEqual(create_response.status_code, 201)
+        self.assertEqual(create_response.status_code, 202)
         payload = create_response.json()
-        quiz_id = payload["quiz"]["id"]
-        self.assertEqual(payload["quiz"]["topic"], "Django ORM")
-        self.assertEqual(len(payload["quiz"]["questions"]), 3)
-        mocked_generate_quiz.assert_called_once()
-
-        first_question_id = payload["quiz"]["questions"][0]["id"]
-        answer_response = self.client.post(
-            f"/api/learning/quizzes/{quiz_id}/questions/{first_question_id}/answer/",
-            data=json.dumps({"selected_option": "B"}),
-            content_type="application/json",
-        )
-
-        self.assertEqual(answer_response.status_code, 200)
-        answer_payload = answer_response.json()
-        self.assertEqual(answer_payload["question"]["selected_option"], "B")
-        self.assertTrue(answer_payload["question"]["is_correct"])
-        self.assertEqual(answer_payload["question"]["correct_option"], "B")
-        self.assertEqual(answer_payload["quiz"]["correct_answers"], 1)
-        self.assertEqual(answer_payload["quiz"]["answered_questions"], 1)
-        self.assertFalse(answer_payload["quiz"]["is_completed"])
+        self.assertEqual(payload["job"]["kind"], "learning_quiz")
+        self.assertEqual(payload["job"]["status"], "queued")
+        self.assertEqual(payload["job"]["payload"]["topic"], "Django ORM")
+        self.assertEqual(payload["job"]["payload"]["model"], "gemma4")
+        self.assertEqual(payload["job"]["payload"]["difficulty_level"], "advanced")
 
     def test_learning_quiz_detail_returns_questions_for_owner(self):
         self.client.force_login(self.owner)
         quiz = LearningQuizSession.objects.create(
             owner=self.owner,
             topic="Django ORM",
-            model="glm-5",
+            model="gemma4",
+            difficulty_level="intermediate",
             total_questions=2,
         )
         LearningQuizQuestion.objects.create(
@@ -429,32 +382,26 @@ class ChatPrivacyTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["quiz"]["topic"], "Django ORM")
+        self.assertEqual(payload["quiz"]["difficulty_level"], "intermediate")
+        self.assertEqual(payload["quiz"]["difficulty_label"], "Intermediate")
         self.assertEqual(len(payload["quiz"]["questions"]), 1)
         self.assertEqual(payload["quiz"]["questions"][0]["question_text"], "What does get() return?")
 
-    @patch(
-        "app.views.generate_learning_path",
-        return_value={
-            "title": "Machine Learning Roadmap",
-            "summary": "A practical ML path for consistent weekly progress.",
-            "first_steps": ["Revise Python basics", "Set up notebooks", "Review linear algebra"],
-            "milestones": [
-                {
-                    "title": "Foundations",
-                    "duration": "2 weeks",
-                    "focus": "Python, statistics, data handling",
-                    "deliverable": "Mini data analysis notebook",
-                },
-                {
-                    "title": "Core ML",
-                    "duration": "4 weeks",
-                    "focus": "Regression, classification, evaluation",
-                    "deliverable": "Two end-to-end ML projects",
-                },
-            ],
-        },
-    )
-    def test_learning_path_generation_returns_structured_payload(self, mocked_generate_path):
+    def test_learning_quiz_delete_removes_owner_quiz(self):
+        self.client.force_login(self.owner)
+        quiz = LearningQuizSession.objects.create(
+            owner=self.owner,
+            topic="Django ORM",
+            model="gemma4",
+            total_questions=2,
+        )
+
+        response = self.client.delete(f"/api/learning/quizzes/{quiz.id}/delete/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(LearningQuizSession.objects.filter(id=quiz.id).exists())
+
+    def test_learning_path_generation_returns_background_job(self):
         self.client.force_login(self.owner)
 
         response = self.client.post(
@@ -469,11 +416,52 @@ class ChatPrivacyTests(TestCase):
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 202)
         payload = response.json()
-        self.assertEqual(payload["path"]["title"], "Machine Learning Roadmap")
-        self.assertEqual(len(payload["path"]["milestones"]), 2)
-        mocked_generate_path.assert_called_once()
+        self.assertEqual(payload["job"]["kind"], "learning_path")
+        self.assertEqual(payload["job"]["status"], "queued")
+
+    def test_roast_mode_creation_returns_background_job_locked_to_qwen35(self):
+        self.client.force_login(self.owner)
+
+        response = self.client.post(
+            "/api/roast-mode/",
+            data=json.dumps({
+                "content_type": "code",
+                "language": "hindi",
+                "content": "print('hello world')",
+                "improvement_goal": "Make it cleaner and more professional",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(payload["job"]["kind"], "roast")
+        self.assertEqual(payload["job"]["status"], "queued")
+        self.assertEqual(payload["job"]["payload"]["model"], "qwen3.5")
+        self.assertEqual(payload["job"]["payload"]["content_type"], "code")
+        self.assertEqual(payload["job"]["payload"]["language"], "hindi")
+
+    def test_fortune_mode_creation_returns_background_job_locked_to_deepseek_v31(self):
+        self.client.force_login(self.owner)
+
+        response = self.client.post(
+            "/api/fortune-mode/",
+            data=json.dumps({
+                "focus_area": "love",
+                "language": "english",
+                "question": "What do the stars say about my next month?",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(payload["job"]["kind"], "fortune")
+        self.assertEqual(payload["job"]["status"], "queued")
+        self.assertEqual(payload["job"]["payload"]["model"], "deepseek-v3.1")
+        self.assertEqual(payload["job"]["payload"]["focus_area"], "love")
 
     @patch("app.views.extract_pdf_chunks", return_value=[
         {"page_number": 1, "content": "Django request lifecycle details."},
@@ -601,6 +589,49 @@ class ChatPrivacyTests(TestCase):
         self.assertEqual(payload["document"]["id"], second_document.id)
         self.assertEqual(payload["session"]["document"]["id"], second_document.id)
 
+    def test_document_context_prefers_requested_chapter_section(self):
+        document = ChatDocument.objects.create(
+            session=self.session,
+            file=SimpleUploadedFile("book.pdf", b"%PDF-1.4 book", content_type="application/pdf"),
+            filename="book.pdf",
+            is_active=True,
+            extracted_characters=3000,
+        )
+        document.chunks.create(chunk_index=0, page_number=1, content="Chapter 1 Introduction to Python")
+        document.chunks.create(chunk_index=1, page_number=2, content="Variables, numbers, and strings.")
+        document.chunks.create(chunk_index=2, page_number=120, content="Chapter 5 Functions and decorators")
+        document.chunks.create(chunk_index=3, page_number=121, content="Functions accept arguments and can return values.")
+        document.chunks.create(chunk_index=4, page_number=122, content="Decorators wrap callables and preserve behavior.")
+        document.chunks.create(chunk_index=5, page_number=150, content="Chapter 6 Classes and inheritance")
+
+        context = build_document_context(self.session.id, "What topics are covered in chapter 5?")
+
+        self.assertIn("Chapter 5 Functions and decorators", context)
+        self.assertIn("Functions accept arguments and can return values.", context)
+        self.assertIn("Decorators wrap callables and preserve behavior.", context)
+        self.assertNotIn("Chapter 1 Introduction to Python", context)
+
+    def test_document_context_builds_overview_for_broad_pdf_review_query(self):
+        document = ChatDocument.objects.create(
+            session=self.session,
+            file=SimpleUploadedFile("overview-book.pdf", b"%PDF-1.4 overview", content_type="application/pdf"),
+            filename="overview-book.pdf",
+            is_active=True,
+            extracted_characters=6000,
+        )
+        document.chunks.create(chunk_index=0, page_number=1, content="Chapter 1 Getting Started")
+        document.chunks.create(chunk_index=1, page_number=2, content="Installing Python and setting up the environment.")
+        document.chunks.create(chunk_index=2, page_number=100, content="Chapter 5 Functions")
+        document.chunks.create(chunk_index=3, page_number=101, content="Function arguments, return values, and decorators.")
+        document.chunks.create(chunk_index=4, page_number=200, content="Chapter 9 Async IO")
+        document.chunks.create(chunk_index=5, page_number=201, content="Asyncio tasks, await, and concurrency patterns.")
+
+        context = build_document_context(self.session.id, "review the pdf content")
+
+        self.assertIn("Chapter 1 Getting Started", context)
+        self.assertIn("Chapter 5 Functions", context)
+        self.assertIn("Chapter 9 Async IO", context)
+
     def test_pdf_upload_rejects_unsupported_model(self):
         self.client.force_login(self.owner)
         file_obj = SimpleUploadedFile(
@@ -620,11 +651,11 @@ class ChatPrivacyTests(TestCase):
             "This model does not support document chat. Choose one of the unlocked document models.",
         )
 
-    def test_pdf_upload_rejects_file_larger_than_ten_mb(self):
+    def test_pdf_upload_rejects_file_larger_than_hundred_mb(self):
         self.client.force_login(self.owner)
         file_obj = SimpleUploadedFile(
             "large-guide.pdf",
-            b"x" * ((10 * 1024 * 1024) + 1),
+            b"x" * ((100 * 1024 * 1024) + 1),
             content_type="application/pdf",
         )
 
@@ -634,7 +665,7 @@ class ChatPrivacyTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "PDF size must be 10 MB or less.")
+        self.assertEqual(response.json()["detail"], "PDF size must be 100 MB or less.")
 
     def test_models_catalog_exposes_document_support(self):
         response = self.client.get("/api/models/")
@@ -642,8 +673,260 @@ class ChatPrivacyTests(TestCase):
         models = response.json()["models"]
         glm5 = next(item for item in models if item["key"] == "glm-5")
         glm47 = next(item for item in models if item["key"] == "glm-4.7")
+        gemma3 = next(item for item in models if item["key"] == "gemma3")
+        gemma4 = next(item for item in models if item["key"] == "gemma4")
+        qwen35 = next(item for item in models if item["key"] == "qwen3.5")
+        qwen3vl = next(item for item in models if item["key"] == "qwen3-vl")
+        kimi = next(item for item in models if item["key"] == "kimi-k2.5")
         self.assertTrue(glm5["supports_documents"])
         self.assertFalse(glm47["supports_documents"])
+        self.assertTrue(gemma3["supports_vision"])
+        self.assertTrue(gemma4["supports_vision"])
+        self.assertTrue(qwen35["supports_vision"])
+        self.assertTrue(qwen3vl["supports_vision"])
+        self.assertTrue(kimi["supports_vision"])
+
+    def test_image_upload_requires_vision_model(self):
+        self.client.force_login(self.owner)
+        file_obj = SimpleUploadedFile(
+            "diagram.png",
+            b"fake-image-bytes",
+            content_type="image/png",
+        )
+
+        response = self.client.post(
+            "/api/chat/images/",
+            data={"file": file_obj, "model": "deepseek-v3.2"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["detail"],
+            "This model does not support image chat. Choose one of the unlocked vision models.",
+        )
+
+    def test_image_upload_creates_active_image_for_chat(self):
+        self.client.force_login(self.owner)
+        file_obj = SimpleUploadedFile(
+            "diagram.png",
+            b"fake-image-bytes",
+            content_type="image/png",
+        )
+
+        response = self.client.post(
+            "/api/chat/images/",
+            data={"file": file_obj, "model": "gemma4"},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        session = ChatSession.objects.get(id=payload["session"]["id"])
+        image = ChatImage.objects.get(session=session, is_active=True)
+        self.assertEqual(session.model, "gemma4")
+        self.assertEqual(payload["image"]["id"], image.id)
+        self.assertEqual(image.content_type, "image/png")
+        self.assertEqual(payload["session"]["active_images"][0]["id"], image.id)
+
+    def test_multiple_image_upload_activates_all_selected_images(self):
+        self.client.force_login(self.owner)
+        first_file = SimpleUploadedFile(
+            "diagram-1.png",
+            b"fake-image-bytes-1",
+            content_type="image/png",
+        )
+        second_file = SimpleUploadedFile(
+            "diagram-2.png",
+            b"fake-image-bytes-2",
+            content_type="image/png",
+        )
+
+        response = self.client.post(
+            "/api/chat/images/",
+            data={"files": [first_file, second_file], "model": "gemma4"},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        session = ChatSession.objects.get(id=payload["session"]["id"])
+        self.assertEqual(session.images.filter(is_active=True).count(), 2)
+        self.assertEqual(len(payload["session"]["active_images"]), 2)
+        self.assertEqual(
+            [image["name"] for image in payload["session"]["active_images"]],
+            ["diagram-1.png", "diagram-2.png"],
+        )
+
+    def test_multiple_image_upload_rejects_total_size_above_limit(self):
+        self.client.force_login(self.owner)
+        first_file = SimpleUploadedFile(
+            "diagram-1.png",
+            b"a" * (30 * 1024 * 1024),
+            content_type="image/png",
+        )
+        second_file = SimpleUploadedFile(
+            "diagram-2.png",
+            b"b" * (21 * 1024 * 1024),
+            content_type="image/png",
+        )
+
+        response = self.client.post(
+            "/api/chat/images/",
+            data={"files": [first_file, second_file], "model": "gemma4"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Selected images must be 50 MB or less in total.")
+
+    def test_uploading_pdf_deactivates_active_image(self):
+        self.client.force_login(self.owner)
+        session = ChatSession.objects.create(
+            owner=self.owner,
+            model="gemma4",
+            title="Vision chat",
+        )
+        image = ChatImage.objects.create(
+            session=session,
+            filename="diagram.png",
+            content_type="image/png",
+            is_active=True,
+        )
+
+        with patch("app.views.extract_pdf_chunks", return_value=[{"chunk_index": 0, "page_number": 1, "content": "Chapter 1"}]):
+            response = self.client.post(
+                "/api/chat/documents/",
+                data={
+                    "session_id": session.id,
+                    "file": SimpleUploadedFile(
+                        "notes.pdf",
+                        b"%PDF-1.4 fake content",
+                        content_type="application/pdf",
+                    ),
+                },
+            )
+
+        self.assertEqual(response.status_code, 201)
+        session.refresh_from_db()
+        image.refresh_from_db()
+        self.assertFalse(image.is_active)
+        self.assertTrue(session.documents.get().is_active)
+
+    def test_deactivate_active_image_clears_session_image(self):
+        self.client.force_login(self.owner)
+        session = ChatSession.objects.create(
+            owner=self.owner,
+            model="gemma4",
+            title="Vision chat",
+        )
+        image = ChatImage.objects.create(
+            session=session,
+            filename="diagram.png",
+            content_type="image/png",
+            is_active=True,
+        )
+
+        response = self.client.post(
+            f"/api/chat/sessions/{session.id}/images/{image.id}/deactivate/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        image.refresh_from_db()
+        self.assertFalse(image.is_active)
+        self.assertIsNone(response.json()["session"]["image"])
+
+    def test_deactivate_all_images_clears_active_image_set(self):
+        self.client.force_login(self.owner)
+        session = ChatSession.objects.create(
+            owner=self.owner,
+            model="gemma4",
+            title="Vision chat",
+        )
+        first_image = ChatImage.objects.create(
+            session=session,
+            filename="diagram-1.png",
+            content_type="image/png",
+            is_active=True,
+        )
+        second_image = ChatImage.objects.create(
+            session=session,
+            filename="diagram-2.png",
+            content_type="image/png",
+            is_active=True,
+        )
+
+        response = self.client.post(
+            f"/api/chat/sessions/{session.id}/images/deactivate-all/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        first_image.refresh_from_db()
+        second_image.refresh_from_db()
+        self.assertFalse(first_image.is_active)
+        self.assertFalse(second_image.is_active)
+        self.assertEqual(response.json()["session"]["active_images"], [])
+
+    def test_selecting_second_image_keeps_first_image_active(self):
+        self.client.force_login(self.owner)
+        session = ChatSession.objects.create(
+            owner=self.owner,
+            model="gemma4",
+            title="Vision chat",
+        )
+        active_image = ChatImage.objects.create(
+            session=session,
+            filename="active.png",
+            content_type="image/png",
+            is_active=True,
+        )
+        next_image = ChatImage.objects.create(
+            session=session,
+            filename="next.png",
+            content_type="image/png",
+            is_active=False,
+        )
+
+        response = self.client.post(
+            f"/api/chat/sessions/{session.id}/images/{next_image.id}/select/",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        active_image.refresh_from_db()
+        next_image.refresh_from_db()
+        self.assertTrue(next_image.is_active)
+        self.assertTrue(active_image.is_active)
+        self.assertEqual(
+            [image["id"] for image in response.json()["session"]["active_images"]],
+            [active_image.id, next_image.id],
+        )
+
+    def test_delete_active_document_promotes_next_saved_document(self):
+        self.client.force_login(self.owner)
+        session = ChatSession.objects.create(
+            owner=self.owner,
+            model="glm-5",
+            title="Docs chat",
+        )
+        active_document = ChatDocument.objects.create(
+            session=session,
+            filename="active.pdf",
+            is_active=True,
+        )
+        next_document = ChatDocument.objects.create(
+            session=session,
+            filename="next.pdf",
+            is_active=False,
+        )
+
+        response = self.client.delete(f"/api/chat/sessions/{session.id}/documents/{active_document.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ChatDocument.objects.filter(id=active_document.id).exists())
+        next_document.refresh_from_db()
+        self.assertTrue(next_document.is_active)
 
     @patch(
         "app.views.conversation_chain_stream",

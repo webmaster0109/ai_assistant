@@ -37,7 +37,34 @@ const initialBranding = {
     "A focused workspace for your private AI conversations.",
   website_favicon: rootElement?.dataset.siteFavicon || "",
 };
-const MAX_DOCUMENT_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_DOCUMENT_UPLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_IMAGE_UPLOAD_BYTES = 50 * 1024 * 1024;
+const QUIZ_LEVEL_OPTIONS = [
+  { value: "beginner", label: "Beginner" },
+  { value: "intermediate", label: "Intermediate" },
+  { value: "advanced", label: "Advanced" },
+  { value: "master", label: "Master" },
+  { value: "enterprises mastery", label: "Enterprises mastery" },
+];
+const ROAST_TYPE_OPTIONS = [
+  { value: "auto", label: "Auto detect" },
+  { value: "code", label: "Code" },
+  { value: "writing", label: "Writing" },
+  { value: "message", label: "Message" },
+];
+const ROAST_LANGUAGE_OPTIONS = [
+  { value: "english", label: "English" },
+  { value: "hindi", label: "Hindi" },
+  { value: "nepali", label: "Nepali" },
+];
+const FORTUNE_FOCUS_OPTIONS = [
+  { value: "general", label: "General" },
+  { value: "love", label: "Love" },
+  { value: "career", label: "Career" },
+  { value: "money", label: "Money" },
+  { value: "study", label: "Study" },
+  { value: "friendship", label: "Friendship" },
+];
 
 function getCsrfToken() {
   const cookie = document.cookie
@@ -178,6 +205,13 @@ function formatTokenCount(value) {
   return String(value);
 }
 
+function formatModelLabel(item) {
+  if (!item) {
+    return "";
+  }
+  return item.label;
+}
+
 function sortSessions(list) {
   return [...list].sort((left, right) => {
     const pinDelta = Number(Boolean(right.is_pinned)) - Number(Boolean(left.is_pinned));
@@ -198,6 +232,21 @@ function upsertSession(list, session) {
   return sortSessions([session, ...deduped]);
 }
 
+function upsertBackgroundJob(list, job) {
+  if (!job) {
+    return list;
+  }
+
+  const deduped = list.filter((item) => item.id !== job.id);
+  return [job, ...deduped].sort(
+    (left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
+  );
+}
+
+function isBackgroundJobActive(job) {
+  return job?.status === "queued" || job?.status === "running";
+}
+
 function getSessionDocuments(session) {
   if (!session) {
     return [];
@@ -214,6 +263,28 @@ function getSessionDocuments(session) {
 function getActiveSessionDocument(session) {
   const documents = getSessionDocuments(session);
   return documents.find((document) => document.is_active) || session?.document || null;
+}
+
+function getSessionImages(session) {
+  if (!session) {
+    return [];
+  }
+
+  const images = Array.isArray(session.images) ? session.images : [];
+  if (images.length) {
+    return images;
+  }
+
+  return session.image ? [session.image] : [];
+}
+
+function getActiveSessionImages(session) {
+  return getSessionImages(session).filter((image) => image.is_active);
+}
+
+function getActiveSessionImage(session) {
+  const images = getActiveSessionImages(session);
+  return images[0] || session?.image || null;
 }
 
 function decodeHtmlEntities(value) {
@@ -1006,7 +1077,7 @@ function BrandIdentity({ branding, subtitle, compact = false }) {
   );
 }
 
-function SidebarNav({ currentPage, onOpenChats, onOpenProfile, onOpenLearn }) {
+function SidebarNav({ currentPage, onOpenChats, onOpenProfile, onOpenQuiz, onOpenLearningPath, onOpenRoast, onOpenFortune }) {
   return (
     <div className="sidebar-nav">
       <button
@@ -1026,12 +1097,36 @@ function SidebarNav({ currentPage, onOpenChats, onOpenProfile, onOpenLearn }) {
         Profile
       </button>
       <button
-        className={`nav-chip ${currentPage === "learn" ? "active" : ""}`}
+        className={`nav-chip ${currentPage === "quiz" ? "active" : ""}`}
         type="button"
-        onClick={onOpenLearn}
+        onClick={onOpenQuiz}
       >
-        <i className="bi bi-mortarboard" />
-        Learn
+        <i className="bi bi-patch-question" />
+        Quiz
+      </button>
+      <button
+        className={`nav-chip ${currentPage === "learning-path" ? "active" : ""}`}
+        type="button"
+        onClick={onOpenLearningPath}
+      >
+        <i className="bi bi-signpost-split" />
+        Path
+      </button>
+      <button
+        className={`nav-chip ${currentPage === "roast" ? "active" : ""}`}
+        type="button"
+        onClick={onOpenRoast}
+      >
+        <i className="bi bi-fire" />
+        Roast
+      </button>
+      <button
+        className={`nav-chip ${currentPage === "fortune" ? "active" : ""}`}
+        type="button"
+        onClick={onOpenFortune}
+      >
+        <i className="bi bi-stars" />
+        Fortune
       </button>
     </div>
   );
@@ -1233,7 +1328,10 @@ function SessionList({
   onClose,
   onOpenChats,
   onOpenProfile,
-  onOpenLearn,
+  onOpenQuiz,
+  onOpenLearningPath,
+  onOpenRoast,
+  onOpenFortune,
   onSearchChange,
   onSelect,
   onTogglePin,
@@ -1271,7 +1369,10 @@ function SessionList({
           currentPage={currentPage}
           onOpenChats={onOpenChats}
           onOpenProfile={onOpenProfile}
-          onOpenLearn={onOpenLearn}
+          onOpenQuiz={onOpenQuiz}
+          onOpenLearningPath={onOpenLearningPath}
+          onOpenRoast={onOpenRoast}
+          onOpenFortune={onOpenFortune}
         />
         <label className="sidebar-search">
           <i className="bi bi-search" />
@@ -1560,35 +1661,28 @@ function upsertQuizHistory(list, quiz) {
 }
 
 function QuizModeCard({
-  models,
   topic,
-  model,
+  level,
   questionCount,
   loading,
-  activeQuiz,
-  quizHistory,
+  pendingJob,
   onTopicChange,
-  onModelChange,
+  onLevelChange,
   onQuestionCountChange,
   onStartQuiz,
-  onOpenQuiz,
 }) {
-  const isQuizCompleted = Boolean(activeQuiz?.is_completed);
-  const activeQuizLabel = !activeQuiz
-    ? "MCQ"
-    : isQuizCompleted
-      ? `${activeQuiz.correct_answers}/${activeQuiz.total_questions}`
-      : "Continue";
-
   return (
     <section className="learn-card">
       <div className="section-heading">
         <span><i className="bi bi-patch-question" /> Quiz mode</span>
-        <span>{activeQuizLabel}</span>
+        <span>Gemma 4</span>
       </div>
       <p className="small-note">
         Ask the AI to test you on a topic with multiple-choice questions and tracked scoring.
       </p>
+      {pendingJob ? (
+        <p className="small-note">A quiz is generating in the background. You can keep using the app.</p>
+      ) : null}
 
       <form className="learn-form" onSubmit={onStartQuiz}>
         <label>
@@ -1603,10 +1697,10 @@ function QuizModeCard({
         </label>
         <div className="learn-form-row">
           <label className="learn-form-field">
-            <span>Model</span>
-            <select value={model} onChange={onModelChange}>
-              {models.map((item) => (
-                <option key={item.key} value={item.key}>
+            <span>Level</span>
+            <select value={level} onChange={onLevelChange}>
+              {QUIZ_LEVEL_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
                   {item.label}
                 </option>
               ))}
@@ -1628,65 +1722,109 @@ function QuizModeCard({
           {loading ? "Building quiz..." : "Generate quiz"}
         </button>
       </form>
+    </section>
+  );
+}
 
-      {activeQuiz ? (
+function QuizResultsCard({
+  activeQuiz,
+  quizHistory,
+  deletingQuizId,
+  pendingJob,
+  onOpenQuiz,
+  onDeleteQuiz,
+}) {
+  const spotlightQuiz = activeQuiz || quizHistory[0] || null;
+  const remainingQuizzes = spotlightQuiz
+    ? quizHistory.filter((quiz) => quiz.id !== spotlightQuiz.id)
+    : quizHistory;
+  const isQuizCompleted = Boolean(spotlightQuiz?.is_completed);
+
+  return (
+    <section className="learn-card">
+      <div className="section-heading">
+        <span><i className="bi bi-trophy" /> Quiz results</span>
+        <span>{quizHistory.length}</span>
+      </div>
+
+      {spotlightQuiz ? (
         <div className="quiz-stage">
           <div className="quiz-summary-strip">
             <article>
               <span>Topic</span>
-              <strong>{activeQuiz.topic}</strong>
+              <strong>{spotlightQuiz.topic}</strong>
             </article>
             <article>
               <span>Progress</span>
-              <strong>{activeQuiz.answered_questions}/{activeQuiz.total_questions}</strong>
+              <strong>{spotlightQuiz.answered_questions}/{spotlightQuiz.total_questions}</strong>
             </article>
             <article>
               <span>{isQuizCompleted ? "Score" : "Status"}</span>
-              <strong>{isQuizCompleted ? `${activeQuiz.score_percent}%` : "Continue"}</strong>
+              <strong>{isQuizCompleted ? `${spotlightQuiz.score_percent}%` : "Continue"}</strong>
             </article>
           </div>
           {!isQuizCompleted ? (
-            <button className="primary-button quiz-launch-button" type="button" onClick={() => onOpenQuiz(activeQuiz)}>
+            <button className="primary-button quiz-launch-button" type="button" onClick={() => onOpenQuiz(spotlightQuiz)}>
               <i className="bi bi-play-circle" />
-              {activeQuiz.answered_questions > 0 ? "Continue quiz" : "Start quiz"}
+              {spotlightQuiz.answered_questions > 0 ? "Continue quiz" : "Start quiz"}
             </button>
           ) : (
             <div className="quiz-feedback is-finished quiz-result-card">
               <strong>Quiz completed</strong>
               <p>
-                You finished this quiz with {activeQuiz.correct_answers} correct answers out of{" "}
-                {activeQuiz.total_questions}.
+                You finished this quiz with {spotlightQuiz.correct_answers} correct answers out of{" "}
+                {spotlightQuiz.total_questions}.
               </p>
-              <button className="secondary-button" type="button" onClick={() => onOpenQuiz(activeQuiz)}>
+              <button className="secondary-button" type="button" onClick={() => onOpenQuiz(spotlightQuiz)}>
                 <i className="bi bi-journal-text" />
                 Review answers
               </button>
             </div>
           )}
         </div>
-      ) : null}
+      ) : (
+        <div className="empty-card quiz-empty-card">
+          {pendingJob ? (
+            <p className="small-note">Your latest quiz is still generating in the background.</p>
+          ) : null}
+        </div>
+      )}
 
       <div className="learn-history">
         <div className="section-heading">
-          <span><i className="bi bi-clock-history" /> Recent quizzes</span>
-          <span>{quizHistory.length}</span>
+          <span><i className="bi bi-clock-history" /> Generated quizzes</span>
+          <span>{remainingQuizzes.length}</span>
         </div>
-        {quizHistory.length ? (
+        {remainingQuizzes.length ? (
           <div className="quiz-history-list">
-            {quizHistory.map((quiz) => (
+            {remainingQuizzes.map((quiz) => (
               <article key={quiz.id} className="quiz-history-item">
-                <div>
-                  <strong>{quiz.topic}</strong>
-                  <span>{quiz.model} • {formatTimestamp(quiz.created_at)}</span>
+                <div className="quiz-history-main">
+                  <div>
+                    <strong>{quiz.topic}</strong>
+                    <span>{quiz.difficulty_label || quiz.difficulty_level} • {formatTimestamp(quiz.created_at)}</span>
+                  </div>
+                  <div className="quiz-history-score">
+                    <strong>{quiz.is_completed ? `${quiz.score_percent}%` : "Continue"}</strong>
+                    <span>{quiz.is_completed ? `${quiz.correct_answers}/${quiz.total_questions}` : `${quiz.answered_questions}/${quiz.total_questions}`}</span>
+                  </div>
                 </div>
-                <div className="quiz-history-score">
-                  <strong>{quiz.is_completed ? `${quiz.score_percent}%` : "Continue"}</strong>
-                  <span>{quiz.is_completed ? `${quiz.correct_answers}/${quiz.total_questions}` : `${quiz.answered_questions}/${quiz.total_questions}`}</span>
+                <div className="quiz-history-actions">
+                  <button className="secondary-button quiz-history-action" type="button" onClick={() => onOpenQuiz(quiz)}>
+                    <i className={`bi ${quiz.is_completed ? "bi-journal-check" : "bi-play-circle"}`} />
+                    {quiz.is_completed ? "Review" : "Continue"}
+                  </button>
+                  <button
+                    className="document-item-delete"
+                    type="button"
+                    onClick={() => onDeleteQuiz(quiz.id)}
+                    disabled={deletingQuizId === quiz.id}
+                    aria-label={`Delete ${quiz.topic} quiz`}
+                    title={`Delete ${quiz.topic} quiz`}
+                  >
+                    <i className={`bi ${deletingQuizId === quiz.id ? "bi-arrow-repeat" : "bi-trash3"}`} />
+                  </button>
                 </div>
-                <button className="secondary-button quiz-history-action" type="button" onClick={() => onOpenQuiz(quiz)}>
-                  <i className={`bi ${quiz.is_completed ? "bi-journal-check" : "bi-play-circle"}`} />
-                  {quiz.is_completed ? "Review" : "Continue"}
-                </button>
               </article>
             ))}
           </div>
@@ -1818,6 +1956,7 @@ function LearningPathCard({
   models,
   form,
   loading,
+  pendingJob,
   result,
   onFormChange,
   onSubmit,
@@ -1831,6 +1970,9 @@ function LearningPathCard({
       <p className="small-note">
         Turn a learning goal into a structured roadmap with milestones, focus areas, and deliverables.
       </p>
+      {pendingJob ? (
+        <p className="small-note">A roadmap is generating in the background. You can keep working meanwhile.</p>
+      ) : null}
 
       <form className="learn-form" onSubmit={onSubmit}>
         <label>
@@ -1847,13 +1989,17 @@ function LearningPathCard({
         <div className="learn-form-row">
           <label className="learn-form-field">
             <span>Level</span>
-            <input
-              type="text"
+            <select
               name="experience_level"
               value={form.experience_level}
               onChange={onFormChange}
-              placeholder="Beginner"
-            />
+            >
+              {QUIZ_LEVEL_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="learn-form-field">
             <span>Hours / week</span>
@@ -1882,7 +2028,7 @@ function LearningPathCard({
             <select name="model" value={form.model} onChange={onFormChange}>
               {models.map((item) => (
                 <option key={item.key} value={item.key}>
-                  {item.label}
+                  {formatModelLabel(item)}
                 </option>
               ))}
             </select>
@@ -1933,56 +2079,50 @@ function LearningPathCard({
   );
 }
 
-function LearnPage({
-  models,
+function QuizPage({
   quizTopic,
-  quizModel,
+  quizLevel,
   quizQuestionCount,
   quizLoading,
   activeQuiz,
   quizHistory,
+  deletingQuizId,
+  pendingQuizJob,
   quizFocusQuestionId,
   answeringQuizQuestionId,
   quizModalOpen,
-  learningPathForm,
-  learningPathLoading,
-  learningPath,
   onQuizTopicChange,
-  onQuizModelChange,
+  onQuizLevelChange,
   onQuizQuestionCountChange,
   onStartQuiz,
   onOpenQuiz,
+  onDeleteQuiz,
   onCloseQuiz,
   onAnswerQuizQuestion,
   onContinueQuiz,
   onPreviousQuiz,
-  onLearningPathFormChange,
-  onGenerateLearningPath,
 }) {
   return (
-    <div className="learn-page">
+    <div className="quiz-page">
       <div className="learn-grid">
         <QuizModeCard
-          models={models}
           topic={quizTopic}
-          model={quizModel}
+          level={quizLevel}
           questionCount={quizQuestionCount}
           loading={quizLoading}
-          activeQuiz={activeQuiz}
-          quizHistory={quizHistory}
+          pendingJob={pendingQuizJob}
           onTopicChange={onQuizTopicChange}
-          onModelChange={onQuizModelChange}
+          onLevelChange={onQuizLevelChange}
           onQuestionCountChange={onQuizQuestionCountChange}
           onStartQuiz={onStartQuiz}
-          onOpenQuiz={onOpenQuiz}
         />
-        <LearningPathCard
-          models={models}
-          form={learningPathForm}
-          loading={learningPathLoading}
-          result={learningPath}
-          onFormChange={onLearningPathFormChange}
-          onSubmit={onGenerateLearningPath}
+        <QuizResultsCard
+          activeQuiz={activeQuiz}
+          quizHistory={quizHistory}
+          deletingQuizId={deletingQuizId}
+          pendingJob={pendingQuizJob}
+          onOpenQuiz={onOpenQuiz}
+          onDeleteQuiz={onDeleteQuiz}
         />
       </div>
 
@@ -2000,16 +2140,347 @@ function LearnPage({
   );
 }
 
+function LearningPathPage({
+  models,
+  learningPathForm,
+  learningPathLoading,
+  learningPath,
+  pendingLearningPathJob,
+  onLearningPathFormChange,
+  onGenerateLearningPath,
+}) {
+  return (
+    <div className="learning-path-page">
+      <LearningPathCard
+        models={models}
+        form={learningPathForm}
+        loading={learningPathLoading}
+        pendingJob={pendingLearningPathJob}
+        result={learningPath}
+        onFormChange={onLearningPathFormChange}
+        onSubmit={onGenerateLearningPath}
+      />
+    </div>
+  );
+}
+
+function RoastModeCard({
+  form,
+  loading,
+  onFormChange,
+  onSubmit,
+}) {
+  return (
+    <section className="learn-card">
+      <div className="section-heading">
+        <span><i className="bi bi-fire" /> Roast mode</span>
+        <span>Qwen 3.5</span>
+      </div>
+      <p className="small-note">
+        Get funny criticism with practical fixes for code, writing, or messages.
+      </p>
+
+      <form className="learn-form" onSubmit={onSubmit}>
+        <div className="learn-form-row">
+          <label className="learn-form-field">
+            <span>Type</span>
+            <select name="content_type" value={form.content_type} onChange={onFormChange}>
+              {ROAST_TYPE_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="learn-form-field">
+            <span>Language</span>
+            <select name="language" value={form.language} onChange={onFormChange}>
+              {ROAST_LANGUAGE_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label>
+          <span>Improve toward</span>
+          <input
+            type="text"
+            name="improvement_goal"
+            value={form.improvement_goal}
+            onChange={onFormChange}
+            placeholder="Cleaner, sharper, more professional"
+          />
+        </label>
+        <label>
+          <span>Content</span>
+          <textarea
+            className="roast-content-input"
+            name="content"
+            value={form.content}
+            onChange={onFormChange}
+            placeholder="Paste code, writing, or a message here..."
+            rows={12}
+            required
+          />
+        </label>
+        <button className="primary-button" type="submit" disabled={loading}>
+          <i className={`bi ${loading ? "bi-arrow-repeat" : "bi-lightning-charge"}`} />
+          {loading ? "Generating roast..." : "Generate roast"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function RoastResultCard({ roastResult, pendingJob }) {
+  return (
+    <section className="learn-card">
+      <div className="section-heading">
+        <span><i className="bi bi-emoji-smile-upside-down" /> Roast result</span>
+        <span>{roastResult ? "Ready" : pendingJob ? "Running" : "Waiting"}</span>
+      </div>
+
+      {roastResult ? (
+        <div className="roadmap-result roast-result">
+          <div className="roadmap-summary roast-section">
+            <span className="overview-label">Roast report</span>
+            <h3>{roastResult.title}</h3>
+            {roastResult.opening_line ? <p>{roastResult.opening_line}</p> : null}
+          </div>
+
+          {roastResult.roast_points?.length ? (
+            <div className="roadmap-first-steps roast-section">
+              <div className="section-heading">
+                <span><i className="bi bi-fire" /> Funny criticism</span>
+                <span>{roastResult.roast_points.length}</span>
+              </div>
+              <ul className="roadmap-step-list">
+                {roastResult.roast_points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {roastResult.improvement_suggestions?.length ? (
+            <div className="roadmap-first-steps roast-section">
+              <div className="section-heading">
+                <span><i className="bi bi-wrench-adjustable-circle" /> Improvement suggestions</span>
+                <span>{roastResult.improvement_suggestions.length}</span>
+              </div>
+              <ul className="roadmap-step-list">
+                {roastResult.improvement_suggestions.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          <div className="roadmap-summary roast-section">
+            <span className="overview-label">Improved version</span>
+            <pre className="roast-improved-block">{roastResult.improved_version}</pre>
+          </div>
+        </div>
+      ) : (
+        <div className="empty-card quiz-empty-card">
+          {pendingJob ? (
+            <p className="small-note">Your roast is cooking in the background.</p>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RoastPage({
+  roastForm,
+  roastLoading,
+  roastResult,
+  pendingRoastJob,
+  onRoastFormChange,
+  onGenerateRoast,
+}) {
+  return (
+    <div className="roast-page">
+      <div className="learn-grid">
+        <RoastModeCard
+          form={roastForm}
+          loading={roastLoading}
+          onFormChange={onRoastFormChange}
+          onSubmit={onGenerateRoast}
+        />
+        <RoastResultCard roastResult={roastResult} pendingJob={pendingRoastJob} />
+      </div>
+    </div>
+  );
+}
+
+function FortuneModeCard({
+  form,
+  loading,
+  onFormChange,
+  onSubmit,
+}) {
+  return (
+    <section className="learn-card">
+      <div className="section-heading">
+        <span><i className="bi bi-stars" /> Fortune teller mode</span>
+        <span>DeepSeek V3.1</span>
+      </div>
+      <p className="small-note">
+        A mystical entertainment-only reading with omens, atmosphere, and playful guidance.
+      </p>
+
+      <form className="learn-form" onSubmit={onSubmit}>
+        <div className="learn-form-row">
+          <label className="learn-form-field">
+            <span>Focus</span>
+            <select name="focus_area" value={form.focus_area} onChange={onFormChange}>
+              {FORTUNE_FOCUS_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="learn-form-field">
+            <span>Language</span>
+            <select name="language" value={form.language} onChange={onFormChange}>
+              {ROAST_LANGUAGE_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label>
+          <span>Your question</span>
+          <textarea
+            className="roast-content-input"
+            name="question"
+            value={form.question}
+            onChange={onFormChange}
+            placeholder="What are the stars trying to tell me this week?"
+            rows={9}
+            required
+          />
+        </label>
+        <button className="primary-button" type="submit" disabled={loading}>
+          <i className={`bi ${loading ? "bi-arrow-repeat" : "bi-magic"}`} />
+          {loading ? "Reading the stars..." : "Reveal fortune"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function FortuneResultCard({ fortuneResult, pendingJob }) {
+  return (
+    <section className="learn-card">
+      <div className="section-heading">
+        <span><i className="bi bi-moon-stars" /> Fortune reading</span>
+        <span>{fortuneResult ? "Ready" : pendingJob ? "Reading" : "Waiting"}</span>
+      </div>
+
+      {fortuneResult ? (
+        <div className="roadmap-result roast-result">
+          <div className="roadmap-summary roast-section">
+            <span className="overview-label">Mystic reading</span>
+            <h3>{fortuneResult.title}</h3>
+            {fortuneResult.opening_line ? <p>{fortuneResult.opening_line}</p> : null}
+          </div>
+
+          <div className="roadmap-summary roast-section">
+            <span className="overview-label">Reading</span>
+            <p>{fortuneResult.reading}</p>
+          </div>
+
+          {fortuneResult.lucky_signs?.length ? (
+            <div className="roadmap-first-steps roast-section">
+              <div className="section-heading">
+                <span><i className="bi bi-sparkles" /> Lucky signs</span>
+                <span>{fortuneResult.lucky_signs.length}</span>
+              </div>
+              <ul className="roadmap-step-list">
+                {fortuneResult.lucky_signs.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {fortuneResult.guidance_points?.length ? (
+            <div className="roadmap-first-steps roast-section">
+              <div className="section-heading">
+                <span><i className="bi bi-compass" /> Guidance</span>
+                <span>{fortuneResult.guidance_points.length}</span>
+              </div>
+              <ul className="roadmap-step-list">
+                {fortuneResult.guidance_points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          <div className="roadmap-summary roast-section">
+            <span className="overview-label">Closing line</span>
+            <p>{fortuneResult.closing_line}</p>
+            <p className="small-note">{fortuneResult.disclaimer}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="empty-card quiz-empty-card">
+          {pendingJob ? (
+            <p className="small-note">The stars are still aligning your reading.</p>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FortunePage({
+  fortuneForm,
+  fortuneLoading,
+  fortuneResult,
+  pendingFortuneJob,
+  onFortuneFormChange,
+  onGenerateFortune,
+}) {
+  return (
+    <div className="roast-page">
+      <div className="learn-grid">
+        <FortuneModeCard
+          form={fortuneForm}
+          loading={fortuneLoading}
+          onFormChange={onFortuneFormChange}
+          onSubmit={onGenerateFortune}
+        />
+        <FortuneResultCard fortuneResult={fortuneResult} pendingJob={pendingFortuneJob} />
+      </div>
+    </div>
+  );
+}
+
 function DocumentPanel({
   activeSession,
   selectedModel,
   models,
   uploading,
   selectingDocumentId,
+  deactivating,
+  deletingDocumentId,
+  pendingDocumentJob,
   open,
   onClose,
   onUpload,
   onSelectDocument,
+  onDeactivateDocument,
+  onDeleteDocument,
 }) {
   const fileInputRef = useRef(null);
   const activeModelKey = activeSession?.model || selectedModel;
@@ -2040,8 +2511,23 @@ function DocumentPanel({
           <div className="document-status">
             <strong>{activeDocument.name}</strong>
             <span>
-              {formatTokenCount(activeDocument.extracted_characters)} chars extracted • model locked to {activeSession.model}
+              {activeDocument.processing_status === "ready"
+                ? `${formatTokenCount(activeDocument.extracted_characters)} chars extracted • model locked to ${activeSession.model}`
+                : activeDocument.processing_status === "failed"
+                  ? activeDocument.processing_error || "PDF processing failed."
+                  : "PDF is processing in the background. You can continue using the app."}
             </span>
+            <div className="document-status-actions">
+              <button
+                className="secondary-button slim-button"
+                type="button"
+                onClick={() => onDeactivateDocument(activeDocument.id)}
+                disabled={uploading || deactivating || selectingDocumentId === activeDocument.id}
+              >
+                <i className={`bi ${deactivating ? "bi-arrow-repeat" : "bi-slash-circle"}`} />
+                {deactivating ? "Deactivating..." : "Deactivate"}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="document-status muted">
@@ -2060,31 +2546,59 @@ function DocumentPanel({
               <span>Saved PDFs</span>
               <span>{documents.length}</span>
             </div>
+            {pendingDocumentJob ? (
+              <p className="small-note">The selected PDF is still processing in the background.</p>
+            ) : null}
             <div className="document-list">
               {documents.map((document) => (
-                <button
+                <div
                   key={document.id}
                   className={`document-item ${document.is_active ? "is-active" : ""}`}
-                  type="button"
-                  onClick={() => onSelectDocument(document.id)}
-                  disabled={uploading || selectingDocumentId === document.id}
                 >
-                  <span className="document-item-main">
-                    <strong>{document.name}</strong>
-                    <span>
-                      {formatTokenCount(document.extracted_characters)} chars extracted • {formatTimestamp(document.uploaded_at)}
+                  <button
+                    className="document-item-button"
+                    type="button"
+                    onClick={() => onSelectDocument(document.id)}
+                    disabled={uploading || selectingDocumentId === document.id || deletingDocumentId === document.id}
+                  >
+                    <span className="document-item-main">
+                      <strong>{document.name}</strong>
+                      <span>
+                        {document.processing_status === "ready"
+                          ? `${formatTokenCount(document.extracted_characters)} chars extracted • ${formatTimestamp(document.uploaded_at)}`
+                          : document.processing_status === "failed"
+                            ? document.processing_error || "Processing failed"
+                            : `Processing in background • ${formatTimestamp(document.uploaded_at)}`}
+                      </span>
                     </span>
-                  </span>
+                  </button>
                   <span className="document-item-side">
                     {selectingDocumentId === document.id ? (
                       <i className="bi bi-arrow-repeat" />
                     ) : document.is_active ? (
                       <span className="document-item-badge">Selected</span>
                     ) : (
-                      <span className="document-item-link">Use</span>
+                      <button
+                        className="document-item-link"
+                        type="button"
+                        onClick={() => onSelectDocument(document.id)}
+                        disabled={uploading || deletingDocumentId === document.id}
+                      >
+                        Use
+                      </button>
                     )}
+                    <button
+                      className="document-item-delete"
+                      type="button"
+                      onClick={() => onDeleteDocument(document.id)}
+                      disabled={deletingDocumentId === document.id || selectingDocumentId === document.id}
+                      title="Delete PDF"
+                      aria-label="Delete PDF"
+                    >
+                      <i className={`bi ${deletingDocumentId === document.id ? "bi-arrow-repeat" : "bi-trash3"}`} />
+                    </button>
                   </span>
-                </button>
+                </div>
               ))}
             </div>
           </div>
@@ -2114,6 +2628,213 @@ function DocumentPanel({
   );
 }
 
+function ImagePanel({
+  activeSession,
+  selectedModel,
+  models,
+  uploading,
+  selectingImageId,
+  deactivating,
+  deactivatingAll,
+  deletingImageId,
+  open,
+  onClose,
+  onUpload,
+  onCapture,
+  onSelectImage,
+  onDeactivateImage,
+  onDeactivateAllImages,
+  onDeleteImage,
+}) {
+  const uploadInputRef = useRef(null);
+  const captureInputRef = useRef(null);
+  const activeModelKey = activeSession?.model || selectedModel;
+  const activeModel = models.find((item) => item.key === activeModelKey) || null;
+  const canUploadToCurrent = !activeSession || Boolean(activeModel?.supports_vision);
+  const images = getSessionImages(activeSession);
+  const activeImages = getActiveSessionImages(activeSession);
+
+  return (
+    <aside
+      className={`document-panel image-panel ${open ? "is-open" : ""} ${
+        activeImages.length ? "has-active-selection" : "is-compact"
+      }`}
+    >
+      <div className="document-panel-copy">
+        <div className="document-panel-head">
+          <div className="section-heading">
+            <span><i className="bi bi-image" /> Vision chat</span>
+            <span>{images.length ? `${images.length} saved` : "Image only"}</span>
+          </div>
+          <button
+            className="secondary-button icon-button document-panel-close"
+            type="button"
+            onClick={onClose}
+            aria-label="Close image panel"
+            title="Close image panel"
+          >
+            <i className="bi bi-x-lg" />
+          </button>
+        </div>
+        <div
+          className={`image-panel-layout ${
+            activeImages.length ? "has-active-selection" : "is-compact"
+          }`}
+        >
+          {activeImages.length ? (
+            <div className="document-status image-status">
+              <div className={`image-status-preview-grid ${activeImages.length > 1 ? "is-multiple" : ""}`}>
+                {activeImages.slice(0, 4).map((image) => (
+                  <div className="image-status-preview" key={image.id}>
+                    <img src={image.url} alt={image.name || "Selected image"} />
+                  </div>
+                ))}
+              </div>
+              <div className="image-status-copy">
+                <strong>
+                  {activeImages.length === 1
+                    ? activeImages[0].name
+                    : `${activeImages.length} images selected`}
+                </strong>
+                <span>
+                  Active for vision chat • model locked to {activeSession.model}
+                </span>
+              </div>
+              <div className="document-status-actions">
+                <button
+                  className="secondary-button slim-button"
+                  type="button"
+                  onClick={onDeactivateAllImages}
+                  disabled={uploading || deactivating || deactivatingAll || Boolean(selectingImageId)}
+                >
+                  <i className={`bi ${deactivatingAll ? "bi-arrow-repeat" : "bi-slash-circle"}`} />
+                  {deactivatingAll ? "Deactivating..." : "Deactivate all"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="document-status muted">
+              <strong>{activeModel?.label || "Choose a model"}</strong>
+              <span>
+                {activeModel?.supports_vision
+                  ? "This model can analyze uploaded or captured images."
+                  : "Choose a vision-capable model before uploading an image."}
+              </span>
+            </div>
+          )}
+
+          {images.length ? (
+            <div className="document-library">
+              <div className="section-heading">
+                <span>Saved images</span>
+                <span>{images.length}</span>
+              </div>
+              <div className="document-list image-list">
+                {images.map((image) => (
+                  <div
+                    key={image.id}
+                    className={`document-item image-item ${image.is_active ? "is-active" : ""}`}
+                  >
+                    <button
+                      className="document-item-button image-item-button"
+                      type="button"
+                      onClick={() => onSelectImage(image.id)}
+                      disabled={uploading || selectingImageId === image.id || deletingImageId === image.id}
+                    >
+                      <div className="image-item-preview">
+                        <img src={image.url} alt={image.name || "Saved image"} />
+                      </div>
+                      <span className="document-item-main">
+                        <strong>{image.name}</strong>
+                        <span>{formatTimestamp(image.uploaded_at)}</span>
+                      </span>
+                    </button>
+                    <span className="document-item-side">
+                      {selectingImageId === image.id ? (
+                        <i className="bi bi-arrow-repeat" />
+                      ) : image.is_active ? (
+                        <span className="document-item-badge">Selected</span>
+                      ) : (
+                        <button
+                          className="document-item-link"
+                          type="button"
+                          onClick={() => onSelectImage(image.id)}
+                          disabled={uploading || deletingImageId === image.id}
+                        >
+                          Use
+                        </button>
+                      )}
+                      {image.is_active ? (
+                        <button
+                          className="document-item-link"
+                          type="button"
+                          onClick={() => onDeactivateImage(image.id)}
+                          disabled={uploading || deactivating || deactivatingAll || selectingImageId === image.id}
+                        >
+                          {deactivating ? "..." : "Off"}
+                        </button>
+                      ) : null}
+                      <button
+                        className="document-item-delete"
+                        type="button"
+                        onClick={() => onDeleteImage(image.id)}
+                        disabled={deletingImageId === image.id || selectingImageId === image.id}
+                        title="Delete image"
+                        aria-label="Delete image"
+                      >
+                        <i className={`bi ${deletingImageId === image.id ? "bi-arrow-repeat" : "bi-trash3"}`} />
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="document-panel-actions image-panel-actions">
+        <input
+          ref={uploadInputRef}
+          className="document-input"
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={onUpload}
+          disabled={uploading || !canUploadToCurrent}
+        />
+        <input
+          ref={captureInputRef}
+          className="document-input"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={onCapture}
+          disabled={uploading || !canUploadToCurrent}
+        />
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => uploadInputRef.current?.click()}
+          disabled={uploading || !canUploadToCurrent}
+        >
+          <i className={`bi ${uploading ? "bi-arrow-repeat" : "bi-upload"}`} />
+          {uploading ? "Uploading..." : images.length ? "Add images" : "Upload images"}
+        </button>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => captureInputRef.current?.click()}
+          disabled={uploading || !canUploadToCurrent}
+        >
+          <i className="bi bi-camera" />
+          Capture
+        </button>
+      </div>
+    </aside>
+  );
+}
+
 function ChatComposer({
   draft,
   model,
@@ -2121,21 +2842,26 @@ function ChatComposer({
   isLocked,
   sending,
   stoppingGeneration,
+  imageOpen,
+  imageAvailable,
   documentOpen,
   documentAvailable,
   onDraftChange,
   onModelChange,
   onDraftKeyDown,
+  onToggleImage,
   onToggleDocument,
   onSubmit,
   onStop,
 }) {
+  const currentModel = models.find((item) => item.key === model) || null;
+
   return (
     <form className="composer" onSubmit={onSubmit}>
       <div className="composer-inline">
         <label className="model-picker model-picker-inline">
           <div className="model-picker-shell">
-            <i className="bi bi-cpu model-picker-icon" />
+            <i className={`bi ${currentModel?.supports_vision ? "bi-image" : "bi-cpu"} model-picker-icon`} />
             <select
               value={model}
               onChange={onModelChange}
@@ -2144,7 +2870,7 @@ function ChatComposer({
             >
               {models.map((item) => (
                 <option key={item.key} value={item.key}>
-                  {item.label}
+                  {formatModelLabel(item)}
                 </option>
               ))}
             </select>
@@ -2161,6 +2887,16 @@ function ChatComposer({
             disabled={sending}
           />
         </div>
+        <button
+          className={`secondary-button composer-icon-button ${imageOpen ? "is-active" : ""}`}
+          type="button"
+          onClick={onToggleImage}
+          disabled={!imageAvailable}
+          title="Open image panel"
+          aria-label="Open image panel"
+        >
+          <i className="bi bi-image" />
+        </button>
         <button
           className={`secondary-button composer-icon-button ${documentOpen ? "is-active" : ""}`}
           type="button"
@@ -2189,12 +2925,44 @@ function ChatComposer({
   );
 }
 
+function MessageImageAttachments({ images }) {
+  const attachments = Array.isArray(images) ? images.filter(Boolean) : [];
+  if (!attachments.length) {
+    return null;
+  }
+
+  return (
+    <div className="message-image-attachments">
+      <div className="message-image-attachments-grid">
+        {attachments.slice(0, 4).map((image) => (
+          <div className="message-image-attachment" key={image.id || image.url || image.name}>
+            {image.url ? (
+              <img src={image.url} alt={image.name || "Attached image"} />
+            ) : (
+              <span className="message-image-attachment-icon">
+                <i className="bi bi-image" />
+              </span>
+            )}
+            <span>{image.name}</span>
+          </div>
+        ))}
+      </div>
+      {attachments.length > 4 ? (
+        <span className="message-image-attachments-count">
+          +{attachments.length - 4} more images selected
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function MessageList({
   activeSessionId,
   branding,
   messages,
   pendingPrompt,
   streamingResponse,
+  pendingImageAttachments,
   loadingConversation,
   editingMessageId,
   editingDraft,
@@ -2276,7 +3044,12 @@ function MessageList({
                 </div>
               </div>
             ) : (
-              <div className="message-body">{message.user_message}</div>
+              <div className="message-body">
+                <MessageImageAttachments
+                  images={message.image_attachments?.length ? message.image_attachments : [message.image_attachment].filter(Boolean)}
+                />
+                <div>{message.user_message}</div>
+              </div>
             )}
           </article>
           <article className="message-bubble assistant">
@@ -2307,7 +3080,10 @@ function MessageList({
             <header>
               <span>You</span>
             </header>
-            <div className="message-body">{pendingPrompt}</div>
+            <div className="message-body">
+              <MessageImageAttachments images={pendingImageAttachments} />
+              <div>{pendingPrompt}</div>
+            </div>
           </article>
           <article className="message-bubble assistant">
             <header>
@@ -2364,6 +3140,7 @@ function SharedChatPage({ branding, sharePayload, shareNotFound, theme, onThemeT
               messages={sharePayload?.messages || []}
               pendingPrompt=""
               streamingResponse=""
+              pendingImageAttachments={[]}
               loadingConversation={!sharePayload}
               editingMessageId={null}
               editingDraft=""
@@ -2417,7 +3194,15 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState("");
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [selectingDocumentId, setSelectingDocumentId] = useState(null);
+  const [deactivatingDocumentId, setDeactivatingDocumentId] = useState(null);
+  const [deletingDocumentId, setDeletingDocumentId] = useState(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [selectingImageId, setSelectingImageId] = useState(null);
+  const [deactivatingImageId, setDeactivatingImageId] = useState(null);
+  const [deactivatingAllImages, setDeactivatingAllImages] = useState(false);
+  const [deletingImageId, setDeletingImageId] = useState(null);
   const [documentPanelOpen, setDocumentPanelOpen] = useState(false);
+  const [imagePanelOpen, setImagePanelOpen] = useState(false);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [stoppingGeneration, setStoppingGeneration] = useState(false);
@@ -2430,23 +3215,40 @@ export default function App() {
   const [editingDraft, setEditingDraft] = useState("");
   const [savingEditMessageId, setSavingEditMessageId] = useState(null);
   const [quizTopic, setQuizTopic] = useState("");
-  const [quizModel, setQuizModel] = useState("");
+  const [quizLevel, setQuizLevel] = useState("beginner");
   const [quizQuestionCount, setQuizQuestionCount] = useState("5");
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizHistory, setQuizHistory] = useState([]);
+  const [deletingQuizId, setDeletingQuizId] = useState(null);
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [quizFocusQuestionId, setQuizFocusQuestionId] = useState(null);
   const [answeringQuizQuestionId, setAnsweringQuizQuestionId] = useState(null);
   const [quizModalOpen, setQuizModalOpen] = useState(false);
   const [learningPathForm, setLearningPathForm] = useState({
     goal: "",
-    experience_level: "",
+    experience_level: "beginner",
     weekly_hours: "",
     timeline: "",
     model: "",
   });
   const [learningPathLoading, setLearningPathLoading] = useState(false);
   const [learningPath, setLearningPath] = useState(null);
+  const [roastForm, setRoastForm] = useState({
+    content_type: "auto",
+    language: "english",
+    content: "",
+    improvement_goal: "",
+  });
+  const [roastLoading, setRoastLoading] = useState(false);
+  const [roastResult, setRoastResult] = useState(null);
+  const [fortuneForm, setFortuneForm] = useState({
+    focus_area: "general",
+    language: "english",
+    question: "",
+  });
+  const [fortuneLoading, setFortuneLoading] = useState(false);
+  const [fortuneResult, setFortuneResult] = useState(null);
+  const [backgroundJobs, setBackgroundJobs] = useState([]);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState("");
   const [sharedChat, setSharedChat] = useState(null);
@@ -2454,6 +3256,7 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
   const streamAbortRef = useRef(null);
+  const handledJobIdsRef = useRef(new Set());
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || null,
@@ -2463,9 +3266,35 @@ export default function App() {
     () => models.filter((model) => model.supports_documents),
     [models],
   );
+  const visionCapableModels = useMemo(
+    () => models.filter((model) => model.supports_vision),
+    [models],
+  );
   const pinnedCount = useMemo(
     () => sessions.filter((session) => session.is_pinned).length,
     [sessions],
+  );
+  const pendingQuizJob = useMemo(
+    () => backgroundJobs.find((job) => job.kind === "learning_quiz" && isBackgroundJobActive(job)) || null,
+    [backgroundJobs],
+  );
+  const pendingLearningPathJob = useMemo(
+    () => backgroundJobs.find((job) => job.kind === "learning_path" && isBackgroundJobActive(job)) || null,
+    [backgroundJobs],
+  );
+  const pendingDocumentJob = useMemo(
+    () => backgroundJobs.find(
+      (job) => job.kind === "document_ingest" && isBackgroundJobActive(job) && job.session_id === activeSessionId,
+    ) || null,
+    [backgroundJobs, activeSessionId],
+  );
+  const pendingRoastJob = useMemo(
+    () => backgroundJobs.find((job) => job.kind === "roast" && isBackgroundJobActive(job)) || null,
+    [backgroundJobs],
+  );
+  const pendingFortuneJob = useMemo(
+    () => backgroundJobs.find((job) => job.kind === "fortune" && isBackgroundJobActive(job)) || null,
+    [backgroundJobs],
   );
 
   function abortStreamRequest() {
@@ -2512,7 +3341,6 @@ export default function App() {
     if (!models.length) {
       return;
     }
-    setQuizModel((current) => current || models[0].key);
     setLearningPathForm((current) => (
       current.model ? current : { ...current, model: models[0].key }
     ));
@@ -2520,7 +3348,7 @@ export default function App() {
 
   useEffect(() => {
     setMobileActionsOpen(false);
-  }, [activeSessionId, currentPage, sidebarOpen, documentPanelOpen]);
+  }, [activeSessionId, currentPage, sidebarOpen, documentPanelOpen, imagePanelOpen]);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) {
@@ -2583,15 +3411,17 @@ export default function App() {
   }, [isSharedView, shareToken]);
 
   async function loadWorkspace() {
-    const [sessionsPayload, usagePayload, usageByModelPayload] = await Promise.all([
+    const [sessionsPayload, usagePayload, usageByModelPayload, jobsPayload] = await Promise.all([
       apiRequest("/api/chat/sessions/"),
       apiRequest("/api/usage-stats/"),
       apiRequest("/api/usage-stats/models/"),
+      apiRequest("/api/background-jobs/"),
     ]);
 
     setSessions(sortSessions(sessionsPayload.sessions || []));
     setUsage(usagePayload);
     setUsageByModel(usageByModelPayload.models || []);
+    setBackgroundJobs(jobsPayload.jobs || []);
 
     if ((sessionsPayload.sessions || []).length === 0) {
       setActiveSessionId(null);
@@ -2602,6 +3432,12 @@ export default function App() {
     if (!activeSessionId) {
       await handleSelectSession(sessionsPayload.sessions[0].id);
     }
+  }
+
+  async function refreshSessionsOnly() {
+    const payload = await apiRequest("/api/chat/sessions/");
+    setSessions(sortSessions(payload.sessions || []));
+    return payload.sessions || [];
   }
 
   async function loadLearningQuizzes() {
@@ -2624,6 +3460,62 @@ export default function App() {
     }
   }
 
+  async function handleResolvedBackgroundJob(job) {
+    if (!job) {
+      return;
+    }
+
+    if (job.status === "completed") {
+      if (job.kind === "learning_quiz" && job.result?.quiz) {
+        const resolvedQuiz = job.result.quiz;
+        setActiveQuiz(resolvedQuiz);
+        setQuizFocusQuestionId(resolvedQuiz.questions?.[0]?.id || null);
+        setQuizHistory((current) => upsertQuizHistory(current, resolvedQuiz));
+        showToast("Quiz ready", `Your ${resolvedQuiz.topic} quiz is ready to start.`, "success");
+        return;
+      }
+
+      if (job.kind === "learning_path" && job.result?.path) {
+        setLearningPath(job.result.path);
+        showToast("Roadmap ready", "Your personalized learning path has been generated.", "success");
+        return;
+      }
+
+      if (job.kind === "roast" && job.result?.roast) {
+        setRoastResult(job.result.roast);
+        showToast("Roast ready", "Your roast report is ready.", "success");
+        return;
+      }
+
+      if (job.kind === "fortune" && job.result?.fortune) {
+        setFortuneResult(job.result.fortune);
+        showToast("Fortune ready", "Your entertainment reading is ready.", "success");
+        return;
+      }
+
+      if (job.kind === "document_ingest") {
+        try {
+          await refreshSessionsOnly();
+        } catch {
+          // Session refresh failure should not hide job completion.
+        }
+        showToast("PDF ready", "Your uploaded PDF finished processing in the background.", "success");
+      }
+      return;
+    }
+
+    if (job.status === "failed") {
+      if (job.kind === "document_ingest") {
+        try {
+          await refreshSessionsOnly();
+        } catch {
+          // Keep the original failure message.
+        }
+      }
+      showToast("Background task failed", job.error_message || "The task could not be completed.", "error");
+    }
+  }
+
   function resetWorkspace() {
     abortStreamRequest();
     setSessions([]);
@@ -2639,17 +3531,31 @@ export default function App() {
     setDraft("");
     setSessionSearch("");
     setUploadingDocument(false);
+    setSelectingDocumentId(null);
+    setDeactivatingDocumentId(null);
+    setDeletingDocumentId(null);
+    setUploadingImage(false);
+    setSelectingImageId(null);
+    setDeactivatingImageId(null);
+    setDeactivatingAllImages(false);
+    setDeletingImageId(null);
     setDocumentPanelOpen(false);
+    setImagePanelOpen(false);
     resetStreamingState();
     setRegeneratingMessageId(null);
     setPinningSessionId(null);
     setSharingSessionId(null);
     setQuizHistory([]);
+    setDeletingQuizId(null);
     setActiveQuiz(null);
     setQuizFocusQuestionId(null);
     setAnsweringQuizQuestionId(null);
     setQuizModalOpen(false);
     setLearningPath(null);
+    setRoastResult(null);
+    setFortuneResult(null);
+    setBackgroundJobs([]);
+    handledJobIdsRef.current = new Set();
     clearEditState();
   }
 
@@ -2740,6 +3646,7 @@ export default function App() {
         setSelectedModel(payload.session.model);
         setMessages(payload.messages || []);
         setDocumentPanelOpen(false);
+        setImagePanelOpen(false);
         clearEditState();
       });
     } catch (error) {
@@ -2788,6 +3695,7 @@ export default function App() {
     setActiveSessionId(null);
     setMessages([]);
     setDocumentPanelOpen(false);
+    setImagePanelOpen(false);
     resetStreamingState();
     clearEditState();
     showToast("New chat", "Start a fresh private conversation.", "info");
@@ -3026,7 +3934,7 @@ export default function App() {
     }
 
     if (file.size > MAX_DOCUMENT_UPLOAD_BYTES) {
-      showToast("PDF too large", "Only PDF files up to 10 MB can be uploaded.", "error");
+      showToast("PDF too large", "Only PDF files up to 100 MB can be uploaded.", "error");
       return;
     }
 
@@ -3056,21 +3964,182 @@ export default function App() {
       setActiveSessionId(payload.session.id);
       setSelectedModel(payload.session.model);
       setSessions((current) => upsertSession(current, payload.session));
-      setDocumentPanelOpen(false);
+      if (payload.job) {
+        setBackgroundJobs((current) => upsertBackgroundJob(current, payload.job));
+      }
       if (!activeSessionId) {
         setMessages([]);
       }
       showToast(
-        payload.reused ? "PDF already available" : "PDF ready",
+        payload.reused ? "PDF already available" : "PDF upload started",
         payload.reused
           ? `${payload.document.name} is already saved in this chat and has been selected.`
-          : `${payload.document.name} was added and selected for this chat.`,
+          : `${payload.document.name} is processing in the background. You can keep using the app while it finishes.`,
         "success",
       );
     } catch (error) {
       showToast("Upload failed", error.message, "error");
     } finally {
       setUploadingDocument(false);
+    }
+  }
+
+  async function uploadImageFiles(files) {
+    const selectedFiles = Array.isArray(files) ? files.filter(Boolean) : [];
+    if (!selectedFiles.length) {
+      return;
+    }
+
+    const totalUploadBytes = selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0);
+    if (totalUploadBytes > MAX_IMAGE_UPLOAD_BYTES) {
+      showToast("Images too large", "Selected images must be 50 MB or less in total.", "error");
+      return;
+    }
+
+    const modelKey = activeSession?.model || selectedModel;
+    const modelConfig = models.find((item) => item.key === modelKey);
+
+    if (!modelConfig?.supports_vision) {
+      showToast(
+        "Vision model required",
+        "Start a new chat with a vision-capable model before uploading an image.",
+        "error",
+      );
+      return;
+    }
+
+    setUploadingImage(true);
+
+    try {
+      const formData = new FormData();
+      selectedFiles.forEach((file) => {
+        formData.append("files", file);
+      });
+      formData.append("model", modelKey);
+      if (activeSessionId) {
+        formData.append("session_id", activeSessionId);
+      }
+
+      const payload = await apiFormRequest("/api/chat/images/", formData);
+      setActiveSessionId(payload.session.id);
+      setSelectedModel(payload.session.model);
+      setSessions((current) => upsertSession(current, payload.session));
+      if (!activeSessionId) {
+        setMessages([]);
+      }
+      const addedCount = (payload.images || []).length;
+      const reusedCount = payload.reused_count || 0;
+      showToast(
+        reusedCount === addedCount ? "Images already available" : "Images ready",
+        reusedCount === addedCount
+          ? `${addedCount} selected image${addedCount === 1 ? "" : "s"} were already saved in this chat and have been re-selected.`
+          : `${addedCount} image${addedCount === 1 ? "" : "s"} ${addedCount === 1 ? "is" : "are"} now active for this chat.`,
+        "success",
+      );
+    } catch (error) {
+      showToast("Image upload failed", error.message, "error");
+    } finally {
+      setUploadingImage(false);
+    }
+  }
+
+  async function handleUploadImage(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    await uploadImageFiles(files);
+  }
+
+  async function handleCaptureImage(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    await uploadImageFiles(file ? [file] : []);
+  }
+
+  async function handleSelectImage(imageId) {
+    if (!activeSessionId || !imageId || selectingImageId) {
+      return;
+    }
+
+    setSelectingImageId(imageId);
+    try {
+      const payload = await apiRequest(
+        `/api/chat/sessions/${activeSessionId}/images/${imageId}/select/`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setSessions((current) => upsertSession(current, payload.session));
+      showToast("Image selected", `${payload.image.name} is now part of this chat's vision set.`, "success");
+    } catch (error) {
+      showToast("Image selection failed", error.message, "error");
+    } finally {
+      setSelectingImageId(null);
+    }
+  }
+
+  async function handleDeactivateImage(imageId) {
+    if (!activeSessionId || !imageId || deactivatingImageId || deactivatingAllImages) {
+      return;
+    }
+
+    setDeactivatingImageId(imageId);
+    try {
+      const payload = await apiRequest(
+        `/api/chat/sessions/${activeSessionId}/images/${imageId}/deactivate/`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setSessions((current) => upsertSession(current, payload.session));
+      showToast("Image deactivated", "This chat will no longer use the selected image.", "success");
+    } catch (error) {
+      showToast("Image deactivation failed", error.message, "error");
+    } finally {
+      setDeactivatingImageId(null);
+    }
+  }
+
+  async function handleDeactivateAllImages() {
+    if (!activeSessionId || deactivatingAllImages || deactivatingImageId) {
+      return;
+    }
+
+    setDeactivatingAllImages(true);
+    try {
+      const payload = await apiRequest(
+        `/api/chat/sessions/${activeSessionId}/images/deactivate-all/`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setSessions((current) => upsertSession(current, payload.session));
+      showToast("Images deactivated", "This chat will no longer use the selected images.", "success");
+    } catch (error) {
+      showToast("Image deactivation failed", error.message, "error");
+    } finally {
+      setDeactivatingAllImages(false);
+    }
+  }
+
+  async function handleDeleteImage(imageId) {
+    if (!activeSessionId || !imageId || deletingImageId) {
+      return;
+    }
+
+    setDeletingImageId(imageId);
+    try {
+      const payload = await apiRequest(`/api/chat/sessions/${activeSessionId}/images/${imageId}/`, {
+        method: "DELETE",
+      });
+      setSessions((current) => upsertSession(current, payload.session));
+      showToast("Image deleted", "The image was removed from this chat.", "success");
+    } catch (error) {
+      showToast("Image delete failed", error.message, "error");
+    } finally {
+      setDeletingImageId(null);
     }
   }
 
@@ -3094,6 +4163,48 @@ export default function App() {
       showToast("Selection failed", error.message, "error");
     } finally {
       setSelectingDocumentId(null);
+    }
+  }
+
+  async function handleDeactivateDocument(documentId) {
+    if (!activeSessionId || !documentId || deactivatingDocumentId) {
+      return;
+    }
+
+    setDeactivatingDocumentId(documentId);
+    try {
+      const payload = await apiRequest(
+        `/api/chat/sessions/${activeSessionId}/documents/${documentId}/deactivate/`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setSessions((current) => upsertSession(current, payload.session));
+      showToast("PDF deactivated", "This chat will no longer use the selected PDF.", "success");
+    } catch (error) {
+      showToast("PDF deactivation failed", error.message, "error");
+    } finally {
+      setDeactivatingDocumentId(null);
+    }
+  }
+
+  async function handleDeleteDocument(documentId) {
+    if (!activeSessionId || !documentId || deletingDocumentId) {
+      return;
+    }
+
+    setDeletingDocumentId(documentId);
+    try {
+      const payload = await apiRequest(`/api/chat/sessions/${activeSessionId}/documents/${documentId}/`, {
+        method: "DELETE",
+      });
+      setSessions((current) => upsertSession(current, payload.session));
+      showToast("PDF deleted", "The PDF was removed from this chat.", "success");
+    } catch (error) {
+      showToast("PDF delete failed", error.message, "error");
+    } finally {
+      setDeletingDocumentId(null);
     }
   }
 
@@ -3253,15 +4364,15 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({
           topic,
-          model: quizModel,
+          difficulty_level: quizLevel,
           question_count: Number(quizQuestionCount),
         }),
       });
-      setActiveQuiz(payload.quiz);
-      setQuizFocusQuestionId(payload.quiz.questions?.[0]?.id || null);
+      if (payload.job) {
+        setBackgroundJobs((current) => upsertBackgroundJob(current, payload.job));
+      }
       setQuizModalOpen(false);
-      setQuizHistory((current) => upsertQuizHistory(current, payload.quiz));
-      showToast("Quiz ready", `Your ${payload.quiz.topic} quiz is ready to start.`, "success");
+      showToast("Quiz started", `Your ${topic} quiz is generating in the background.`, "info");
     } catch (error) {
       showToast("Quiz failed", error.message, "error");
     } finally {
@@ -3362,9 +4473,43 @@ export default function App() {
     }
   }
 
+  async function handleDeleteQuiz(quizId) {
+    if (!quizId || deletingQuizId) {
+      return;
+    }
+
+    setDeletingQuizId(quizId);
+    try {
+      await apiRequest(`/api/learning/quizzes/${quizId}/delete/`, {
+        method: "DELETE",
+      });
+      setQuizHistory((current) => current.filter((quiz) => quiz.id !== quizId));
+      if (activeQuiz?.id === quizId) {
+        setActiveQuiz(null);
+        setQuizFocusQuestionId(null);
+        setQuizModalOpen(false);
+      }
+      showToast("Quiz deleted", "This quiz was removed from your history.", "success");
+    } catch (error) {
+      showToast("Quiz delete failed", error.message, "error");
+    } finally {
+      setDeletingQuizId(null);
+    }
+  }
+
   function handleLearningPathFormChange(event) {
     const { name, value } = event.target;
     setLearningPathForm((current) => ({ ...current, [name]: value }));
+  }
+
+  function handleRoastFormChange(event) {
+    const { name, value } = event.target;
+    setRoastForm((current) => ({ ...current, [name]: value }));
+  }
+
+  function handleFortuneFormChange(event) {
+    const { name, value } = event.target;
+    setFortuneForm((current) => ({ ...current, [name]: value }));
   }
 
   async function handleGenerateLearningPath(event) {
@@ -3383,8 +4528,10 @@ export default function App() {
         method: "POST",
         body: JSON.stringify(learningPathForm),
       });
-      setLearningPath(payload.path);
-      showToast("Roadmap ready", "Your personalized learning path has been generated.", "success");
+      if (payload.job) {
+        setBackgroundJobs((current) => upsertBackgroundJob(current, payload.job));
+      }
+      showToast("Roadmap started", "Your learning path is generating in the background.", "info");
     } catch (error) {
       showToast("Roadmap failed", error.message, "error");
     } finally {
@@ -3392,8 +4539,62 @@ export default function App() {
     }
   }
 
+  async function handleGenerateRoast(event) {
+    event.preventDefault();
+    const content = roastForm.content.trim();
+
+    if (!content) {
+      showToast("Content required", "Paste something before generating roast mode.", "error");
+      return;
+    }
+
+    setRoastLoading(true);
+
+    try {
+      const payload = await apiRequest("/api/roast-mode/", {
+        method: "POST",
+        body: JSON.stringify(roastForm),
+      });
+      if (payload.job) {
+        setBackgroundJobs((current) => upsertBackgroundJob(current, payload.job));
+      }
+      showToast("Roast started", "Your roast is generating in the background.", "info");
+    } catch (error) {
+      showToast("Roast failed", error.message, "error");
+    } finally {
+      setRoastLoading(false);
+    }
+  }
+
+  async function handleGenerateFortune(event) {
+    event.preventDefault();
+    const question = fortuneForm.question.trim();
+
+    if (!question) {
+      showToast("Question required", "Ask the fortune teller something first.", "error");
+      return;
+    }
+
+    setFortuneLoading(true);
+
+    try {
+      const payload = await apiRequest("/api/fortune-mode/", {
+        method: "POST",
+        body: JSON.stringify(fortuneForm),
+      });
+      if (payload.job) {
+        setBackgroundJobs((current) => upsertBackgroundJob(current, payload.job));
+      }
+      showToast("Fortune started", "The mystical reading is generating in the background.", "info");
+    } catch (error) {
+      showToast("Fortune failed", error.message, "error");
+    } finally {
+      setFortuneLoading(false);
+    }
+  }
+
   useEffect(() => {
-    if (!currentUser || currentPage !== "learn") {
+    if (!currentUser || (currentPage !== "quiz" && currentPage !== "roast")) {
       return;
     }
 
@@ -3401,6 +4602,72 @@ export default function App() {
       showToast("Learning tools unavailable", error.message, "error");
     });
   }, [currentPage, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      return undefined;
+    }
+
+    const pendingJobs = backgroundJobs.filter(isBackgroundJobActive);
+    if (!pendingJobs.length) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function pollJobs() {
+      try {
+        const responses = await Promise.all(
+          pendingJobs.map((job) =>
+            apiRequest(`/api/background-jobs/${job.id}/`).catch(() => null),
+          ),
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        const resolvedJobs = responses
+          .map((payload) => payload?.job)
+          .filter(Boolean);
+
+        if (resolvedJobs.length) {
+          setBackgroundJobs((current) => {
+            let next = current;
+            for (const job of resolvedJobs) {
+              next = upsertBackgroundJob(next, job);
+            }
+            return next;
+          });
+        }
+      } catch {
+        // Keep background polling silent and non-disruptive.
+      }
+    }
+
+    pollJobs();
+    const intervalId = window.setInterval(pollJobs, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [backgroundJobs, currentUser]);
+
+  useEffect(() => {
+    const resolvedJobs = backgroundJobs.filter(
+      (job) => !isBackgroundJobActive(job) && !handledJobIdsRef.current.has(job.id),
+    );
+
+    if (!resolvedJobs.length) {
+      return;
+    }
+
+    resolvedJobs.forEach((job) => {
+      handledJobIdsRef.current.add(job.id);
+      handleResolvedBackgroundJob(job);
+    });
+  }, [backgroundJobs]);
 
   if (!authReady) {
     return (
@@ -3478,8 +4745,20 @@ export default function App() {
               setCurrentPage("profile");
               setSidebarOpen(false);
             }}
-            onOpenLearn={() => {
-              setCurrentPage("learn");
+            onOpenQuiz={() => {
+              setCurrentPage("quiz");
+              setSidebarOpen(false);
+            }}
+            onOpenLearningPath={() => {
+              setCurrentPage("learning-path");
+              setSidebarOpen(false);
+            }}
+            onOpenRoast={() => {
+              setCurrentPage("roast");
+              setSidebarOpen(false);
+            }}
+            onOpenFortune={() => {
+              setCurrentPage("fortune");
               setSidebarOpen(false);
             }}
             onSearchChange={(event) => setSessionSearch(event.target.value)}
@@ -3492,12 +4771,15 @@ export default function App() {
           />
 
           <main className="workspace">
-            {currentPage === "chat" && documentPanelOpen ? (
+            {currentPage === "chat" && (documentPanelOpen || imagePanelOpen) ? (
               <button
                 className="document-panel-backdrop"
                 type="button"
-                onClick={() => setDocumentPanelOpen(false)}
-                aria-label="Close document panel"
+                onClick={() => {
+                  setDocumentPanelOpen(false);
+                  setImagePanelOpen(false);
+                }}
+                aria-label="Close attachment panel"
               />
             ) : null}
             <header className="workspace-header">
@@ -3611,14 +4893,38 @@ export default function App() {
                 </div>
               </div>
               <div className="workspace-heading-copy">
-                <h1>{currentPage === "profile" ? "Profile" : currentPage === "learn" ? "Learn" : activeSession?.title || "New conversation"}</h1>
+                <h1>{
+                  currentPage === "profile"
+                    ? "Profile"
+                    : currentPage === "quiz"
+                      ? "Quiz"
+                      : currentPage === "learning-path"
+                        ? "Learning path"
+                        : currentPage === "roast"
+                          ? "Roast mode"
+                          : currentPage === "fortune"
+                            ? "Fortune teller mode"
+                        : activeSession?.title || "New conversation"
+                }</h1>
                 {currentPage === "profile" ? (
                   <p className="workspace-subtitle">
                     A separate page for this user’s account details and usage totals.
                   </p>
-                ) : currentPage === "learn" ? (
+                ) : currentPage === "quiz" ? (
                   <p className="workspace-subtitle">
-                    Practice with quizzes and generate guided learning roadmaps inside your workspace.
+                    Generate quizzes, continue attempts, and review scores from a focused workspace.
+                  </p>
+                ) : currentPage === "learning-path" ? (
+                  <p className="workspace-subtitle">
+                    Build a personalized roadmap with milestones, first steps, and deliverables.
+                  </p>
+                ) : currentPage === "roast" ? (
+                  <p className="workspace-subtitle">
+                    Get funny criticism, sharp observations, and cleaner improved rewrites.
+                  </p>
+                ) : currentPage === "fortune" ? (
+                  <p className="workspace-subtitle">
+                    A mystical entertainment-only reading with playful omens and soft guidance.
                   </p>
                 ) : null}
               </div>
@@ -3626,32 +4932,57 @@ export default function App() {
 
             {currentPage === "profile" ? (
               <ProfilePage currentUser={currentUser} usage={usage} usageByModel={usageByModel} sessions={sessions} theme={theme} />
-            ) : currentPage === "learn" ? (
-              <LearnPage
-                models={models}
+            ) : currentPage === "quiz" ? (
+              <QuizPage
                 quizTopic={quizTopic}
-                quizModel={quizModel}
+                quizLevel={quizLevel}
                 quizQuestionCount={quizQuestionCount}
                 quizLoading={quizLoading}
                 activeQuiz={activeQuiz}
-              quizHistory={quizHistory}
-              quizFocusQuestionId={quizFocusQuestionId}
-              answeringQuizQuestionId={answeringQuizQuestionId}
-              quizModalOpen={quizModalOpen}
-              learningPathForm={learningPathForm}
-              learningPathLoading={learningPathLoading}
-              learningPath={learningPath}
+                quizHistory={quizHistory}
+                deletingQuizId={deletingQuizId}
+                pendingQuizJob={pendingQuizJob}
+                quizFocusQuestionId={quizFocusQuestionId}
+                answeringQuizQuestionId={answeringQuizQuestionId}
+                quizModalOpen={quizModalOpen}
                 onQuizTopicChange={(event) => setQuizTopic(event.target.value)}
-                onQuizModelChange={(event) => setQuizModel(event.target.value)}
+                onQuizLevelChange={(event) => setQuizLevel(event.target.value)}
                 onQuizQuestionCountChange={(event) => setQuizQuestionCount(event.target.value)}
                 onStartQuiz={handleStartQuiz}
                 onOpenQuiz={handleOpenQuiz}
+                onDeleteQuiz={handleDeleteQuiz}
                 onCloseQuiz={() => setQuizModalOpen(false)}
                 onAnswerQuizQuestion={handleAnswerQuizQuestion}
                 onContinueQuiz={handleContinueQuiz}
                 onPreviousQuiz={handlePreviousQuiz}
+              />
+            ) : currentPage === "learning-path" ? (
+              <LearningPathPage
+                models={models}
+                learningPathForm={learningPathForm}
+                learningPathLoading={learningPathLoading}
+                learningPath={learningPath}
+                pendingLearningPathJob={pendingLearningPathJob}
                 onLearningPathFormChange={handleLearningPathFormChange}
                 onGenerateLearningPath={handleGenerateLearningPath}
+              />
+            ) : currentPage === "roast" ? (
+              <RoastPage
+                roastForm={roastForm}
+                roastLoading={roastLoading}
+                roastResult={roastResult}
+                pendingRoastJob={pendingRoastJob}
+                onRoastFormChange={handleRoastFormChange}
+                onGenerateRoast={handleGenerateRoast}
+              />
+            ) : currentPage === "fortune" ? (
+              <FortunePage
+                fortuneForm={fortuneForm}
+                fortuneLoading={fortuneLoading}
+                fortuneResult={fortuneResult}
+                pendingFortuneJob={pendingFortuneJob}
+                onFortuneFormChange={handleFortuneFormChange}
+                onGenerateFortune={handleGenerateFortune}
               />
             ) : (
               <>
@@ -3662,6 +4993,7 @@ export default function App() {
                   messages={messages}
                   pendingPrompt={pendingPrompt}
                   streamingResponse={streamingResponse}
+                  pendingImageAttachments={getActiveSessionImages(activeSession)}
                   loadingConversation={loadingConversation}
                   editingMessageId={editingMessageId}
                   editingDraft={editingDraft}
@@ -3682,14 +5014,41 @@ export default function App() {
                   isLocked={Boolean(activeSession)}
                   sending={sending}
                   stoppingGeneration={stoppingGeneration}
+                  imageOpen={imagePanelOpen}
+                  imageAvailable={Boolean(getSessionImages(activeSession).length || visionCapableModels.length)}
                   documentOpen={documentPanelOpen}
                   documentAvailable={Boolean(getSessionDocuments(activeSession).length || models.length)}
                   onDraftChange={(event) => setDraft(event.target.value)}
                   onDraftKeyDown={handleDraftKeyDown}
                   onModelChange={(event) => setSelectedModel(event.target.value)}
-                  onToggleDocument={() => setDocumentPanelOpen((current) => !current)}
+                  onToggleImage={() => {
+                    setImagePanelOpen((current) => !current);
+                    setDocumentPanelOpen(false);
+                  }}
+                  onToggleDocument={() => {
+                    setDocumentPanelOpen((current) => !current);
+                    setImagePanelOpen(false);
+                  }}
                   onSubmit={handleSendMessage}
                   onStop={handleStopGeneration}
+                />
+                <ImagePanel
+                  activeSession={activeSession}
+                  selectedModel={selectedModel}
+                  models={models}
+                  uploading={uploadingImage}
+                  selectingImageId={selectingImageId}
+                  deactivating={Boolean(deactivatingImageId)}
+                  deactivatingAll={deactivatingAllImages}
+                  deletingImageId={deletingImageId}
+                  open={imagePanelOpen}
+                  onClose={() => setImagePanelOpen(false)}
+                  onUpload={handleUploadImage}
+                  onCapture={handleCaptureImage}
+                  onSelectImage={handleSelectImage}
+                  onDeactivateImage={handleDeactivateImage}
+                  onDeactivateAllImages={handleDeactivateAllImages}
+                  onDeleteImage={handleDeleteImage}
                 />
                 <DocumentPanel
                   activeSession={activeSession}
@@ -3697,10 +5056,15 @@ export default function App() {
                   models={models}
                   uploading={uploadingDocument}
                   selectingDocumentId={selectingDocumentId}
+                  deactivating={Boolean(deactivatingDocumentId)}
+                  deletingDocumentId={deletingDocumentId}
+                  pendingDocumentJob={pendingDocumentJob}
                   open={documentPanelOpen}
                   onClose={() => setDocumentPanelOpen(false)}
                   onUpload={handleUploadDocument}
                   onSelectDocument={handleSelectDocument}
+                  onDeactivateDocument={handleDeactivateDocument}
+                  onDeleteDocument={handleDeleteDocument}
                 />
               </>
             )}

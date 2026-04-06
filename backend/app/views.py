@@ -1,6 +1,7 @@
 import json
 import uuid
 import hashlib
+from datetime import timedelta
 from functools import wraps
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
@@ -17,29 +18,29 @@ from .langchain import (
     clear_stream_stop,
     conversation_chain,
     conversation_chain_stream,
-    generate_learning_path,
-    generate_quiz_questions,
     generate_title,
     load_regeneration_history,
     request_stream_stop,
     set_session_history,
 )
-from .documents import extract_pdf_chunks, replace_document_chunks
 from .models import (
+    BackgroundJob,
     ChatConversations,
     ChatDocument,
+    ChatImage,
     ChatSession,
     LearningQuizQuestion,
     LearningQuizSession,
 )
-from .ollama import list_models, supports_documents
+from .ollama import list_models, supports_documents, supports_vision
 from .utils import cloud_usage_by_model, cloud_usage_stats, get_website_branding
 
 
 User = get_user_model()
 MAX_PINNED_SESSIONS = 3
 ALLOWED_DOCUMENT_CONTENT_TYPES = {"application/pdf"}
-MAX_DOCUMENT_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_DOCUMENT_UPLOAD_BYTES = 100 * 1024 * 1024
+MAX_IMAGE_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 def parse_request_data(request):
@@ -96,6 +97,38 @@ def ensure_document_file_hash(document):
     return document.file_hash
 
 
+def ensure_image_file_hash(image):
+    if image.file_hash:
+        return image.file_hash
+
+    digest = hashlib.sha256()
+    try:
+        with image.file.open("rb") as stored_file:
+            for chunk in iter(lambda: stored_file.read(8192), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    image.file_hash = digest.hexdigest()
+    image.save(update_fields=["file_hash"])
+    return image.file_hash
+
+
+def deactivate_session_documents(session, *, exclude_id=None):
+    queryset = session.documents.filter(is_active=True)
+    if exclude_id is not None:
+        queryset = queryset.exclude(id=exclude_id)
+    queryset.update(is_active=False)
+
+
+def deactivate_session_images(session, *, exclude_id=None, exclude_ids=None):
+    queryset = session.images.filter(is_active=True)
+    if exclude_id is not None:
+        queryset = queryset.exclude(id=exclude_id)
+    if exclude_ids:
+        queryset = queryset.exclude(id__in=list(exclude_ids))
+    queryset.update(is_active=False)
+
+
 def login_required_json(view_func):
     @wraps(view_func)
     def wrapped(request, *args, **kwargs):
@@ -137,13 +170,34 @@ def serialize_document(document):
         "uploaded_at": document.uploaded_at.isoformat(),
         "extracted_characters": document.extracted_characters,
         "is_active": document.is_active,
+        "processing_status": document.processing_status,
+        "processing_error": document.processing_error,
+        "is_ready": document.processing_status == ChatDocument.STATUS_READY,
     }
+
+
+def serialize_image(image):
+    return {
+        "id": image.id,
+        "name": image.filename,
+        "uploaded_at": image.uploaded_at.isoformat(),
+        "is_active": image.is_active,
+        "content_type": image.content_type,
+        "url": image.file.url if image.file else "",
+    }
+
+
+def serialize_image_list(images):
+    return [serialize_image(image) for image in images]
 
 
 def serialize_session(session):
     latest_conversation = session.conversations.order_by("-created_at").first()
     documents = session.get_documents()
     active_document = session.get_active_document()
+    images = session.get_images()
+    active_images = session.get_active_images()
+    active_image = active_images[0] if active_images else None
     return {
         "id": session.id,
         "title": session.title,
@@ -153,6 +207,9 @@ def serialize_session(session):
         "share_url": build_share_path(session),
         "document": serialize_document(active_document) if active_document else None,
         "documents": [serialize_document(document) for document in documents],
+        "image": serialize_image(active_image) if active_image else None,
+        "active_images": serialize_image_list(active_images),
+        "images": [serialize_image(image) for image in images],
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
         "preview": latest_conversation.user_message[:120] if latest_conversation else "",
@@ -160,15 +217,39 @@ def serialize_session(session):
 
 
 def serialize_message(message):
+    image_attachments = message.image_attachments_snapshot or []
+    if not image_attachments and message.image_attachment:
+        image_attachments = [serialize_image(message.image_attachment)]
     return {
         "id": message.id,
         "session_id": message.session_id,
+        "image_attachment": serialize_image(message.image_attachment) if message.image_attachment else None,
+        "image_attachments": image_attachments,
         "user_message": message.user_message,
         "ai_message": message.ai_message,
         "input_tokens": message.input_tokens,
         "output_tokens": message.output_tokens,
         "created_at": message.created_at.isoformat(),
     }
+
+
+def snapshot_images(images):
+    return [serialize_image(image) for image in images]
+
+
+def resolve_conversation_image_attachments(conversation):
+    snapshot = conversation.image_attachments_snapshot or []
+    snapshot_ids = [item.get("id") for item in snapshot if item.get("id")]
+    attachments = []
+    if snapshot_ids:
+        image_map = {
+            image.id: image
+            for image in conversation.session.images.filter(id__in=snapshot_ids)
+        }
+        attachments = [image_map[item_id] for item_id in snapshot_ids if item_id in image_map]
+    elif conversation.image_attachment_id:
+        attachments = [conversation.image_attachment]
+    return attachments
 
 
 def serialize_learning_quiz_question(question):
@@ -207,6 +288,8 @@ def serialize_learning_quiz_session(quiz, include_questions=False):
         "id": quiz.id,
         "topic": quiz.topic,
         "model": quiz.model,
+        "difficulty_level": quiz.difficulty_level,
+        "difficulty_label": quiz.get_difficulty_level_display(),
         "total_questions": total_questions,
         "answered_questions": answered_questions,
         "correct_answers": quiz.correct_answers,
@@ -220,6 +303,34 @@ def serialize_learning_quiz_session(quiz, include_questions=False):
     return payload
 
 
+def serialize_background_job(job):
+    return {
+        "id": job.id,
+        "kind": job.kind,
+        "status": job.status,
+        "title": job.title,
+        "session_id": job.session_id,
+        "document_id": job.document_id,
+        "payload": job.payload or {},
+        "result": job.result or {},
+        "error_message": job.error_message,
+        "created_at": job.created_at.isoformat(),
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+    }
+
+
+def enqueue_background_job(*, owner, kind, title="", session=None, document=None, payload=None):
+    return BackgroundJob.objects.create(
+        owner=owner,
+        kind=kind,
+        title=title,
+        session=session,
+        document=document,
+        payload=payload or {},
+    )
+
+
 def get_owned_session_or_404(request, session_id):
     return ChatSession.objects.filter(owner=request.user, id=session_id).first()
 
@@ -231,7 +342,7 @@ def get_public_session_or_404(share_token):
 def ordered_sessions_for_user(user):
     return (
         ChatSession.objects.filter(owner=user)
-        .prefetch_related("conversations", "documents")
+        .prefetch_related("conversations", "documents", "images")
         .order_by("-is_pinned", "-updated_at")
     )
 
@@ -269,13 +380,13 @@ def web_manifest(request):
     branding = get_website_branding()
     icons = [
         {
-            "src": "/static/frontend/pwa-icon-192.png",
+            "src": static("frontend/pwa-icon-192.png"),
             "sizes": "192x192",
             "type": "image/png",
             "purpose": "any",
         },
         {
-            "src": "/static/frontend/pwa-icon-512.png",
+            "src": static("frontend/pwa-icon-512.png"),
             "sizes": "512x512",
             "type": "image/png",
             "purpose": "any maskable",
@@ -377,6 +488,25 @@ def models_catalog(request):
 
 @login_required_json
 @require_GET
+def background_job_list(request):
+    jobs = BackgroundJob.objects.filter(
+        owner=request.user,
+        status__in=[BackgroundJob.STATUS_QUEUED, BackgroundJob.STATUS_RUNNING],
+    ).order_by("-created_at")[:20]
+    return JsonResponse({"jobs": [serialize_background_job(job) for job in jobs]}, status=200)
+
+
+@login_required_json
+@require_GET
+def background_job_detail(request, job_id):
+    job = BackgroundJob.objects.filter(owner=request.user, id=job_id).first()
+    if job is None:
+        return json_error("Background job not found.", status=404)
+    return JsonResponse({"job": serialize_background_job(job)}, status=200)
+
+
+@login_required_json
+@require_GET
 def learning_quiz_sessions(request):
     quizzes = (
         LearningQuizSession.objects.filter(owner=request.user)
@@ -407,11 +537,22 @@ def learning_quiz_detail(request, quiz_id):
 
 
 @login_required_json
+@require_http_methods(["DELETE"])
+def delete_learning_quiz(request, quiz_id):
+    quiz = LearningQuizSession.objects.filter(owner=request.user, id=quiz_id).first()
+    if quiz is None:
+        return json_error("Quiz not found.", status=404)
+
+    quiz.delete()
+    return JsonResponse({"success": True, "quiz_id": quiz_id}, status=200)
+
+
+@login_required_json
 @require_http_methods(["POST"])
 def create_learning_quiz(request):
     payload = parse_request_data(request)
     topic = (payload.get("topic") or "").strip()
-    model = (payload.get("model") or "").strip()
+    difficulty_level = (payload.get("difficulty_level") or LearningQuizSession.LEVEL_BEGINNER).strip().lower()
     question_count = payload.get("question_count") or 5
 
     try:
@@ -424,56 +565,26 @@ def create_learning_quiz(request):
     if not topic:
         return json_error("Quiz topic is required.")
 
+    if difficulty_level not in {item[0] for item in LearningQuizSession.LEVEL_CHOICES}:
+        return json_error("Please choose a valid quiz level.")
+
+    model = "gemma4"
     available_keys = {item["key"] for item in list_models()}
     if model not in available_keys:
-        return json_error("Please choose a valid model.")
+        return json_error("Gemma 4 quiz generation is unavailable right now.")
 
-    previous_questions = list(
-        LearningQuizQuestion.objects.filter(
-            quiz_session__owner=request.user,
-            quiz_session__topic__iexact=topic,
-        )
-        .order_by("-id")
-        .values_list("question_text", flat=True)[:40]
-    )
-
-    try:
-        generated_questions = generate_quiz_questions(
-            model,
-            topic,
-            question_count=question_count,
-            previous_questions=previous_questions,
-        )
-    except ValueError as error:
-        return json_error(str(error))
-    except Exception:
-        return json_error("Unable to generate quiz right now. Please try again.")
-
-    quiz = LearningQuizSession.objects.create(
+    job = enqueue_background_job(
         owner=request.user,
-        topic=topic,
-        model=model,
-        total_questions=len(generated_questions),
+        kind=BackgroundJob.KIND_LEARNING_QUIZ,
+        title=f"Quiz: {topic}",
+        payload={
+            "topic": topic,
+            "model": model,
+            "difficulty_level": difficulty_level,
+            "question_count": question_count,
+        },
     )
-    LearningQuizQuestion.objects.bulk_create(
-        [
-            LearningQuizQuestion(
-                quiz_session=quiz,
-                question_text=item["question_text"],
-                option_a=item["option_a"],
-                option_b=item["option_b"],
-                option_c=item["option_c"],
-                option_d=item["option_d"],
-                correct_option=item["correct_option"],
-                explanation=item["explanation"],
-                sort_order=item["sort_order"],
-            )
-            for item in generated_questions
-        ]
-    )
-
-    quiz = LearningQuizSession.objects.prefetch_related("questions").get(id=quiz.id)
-    return JsonResponse({"quiz": serialize_learning_quiz_session(quiz, include_questions=True)}, status=201)
+    return JsonResponse({"job": serialize_background_job(job)}, status=202)
 
 
 @login_required_json
@@ -542,7 +653,7 @@ def create_learning_path(request):
     payload = parse_request_data(request)
     goal = (payload.get("goal") or "").strip()
     model = (payload.get("model") or "").strip()
-    experience_level = (payload.get("experience_level") or "").strip()
+    experience_level = (payload.get("experience_level") or LearningQuizSession.LEVEL_BEGINNER).strip().lower()
     weekly_hours = (payload.get("weekly_hours") or "").strip()
     timeline = (payload.get("timeline") or "").strip()
 
@@ -552,33 +663,95 @@ def create_learning_path(request):
     available_keys = {item["key"] for item in list_models()}
     if model not in available_keys:
         return json_error("Please choose a valid model.")
+    if experience_level not in {item[0] for item in LearningQuizSession.LEVEL_CHOICES}:
+        return json_error("Please choose a valid learning level.")
 
-    try:
-        roadmap = generate_learning_path(
-            model,
-            goal,
-            experience_level,
-            weekly_hours,
-            timeline,
-        )
-    except ValueError as error:
-        return json_error(str(error))
-    except Exception:
-        return json_error("Unable to generate a learning path right now. Please try again.")
-
-    return JsonResponse(
-        {
-            "path": roadmap,
-            "meta": {
-                "goal": goal,
-                "model": model,
-                "experience_level": experience_level,
-                "weekly_hours": weekly_hours,
-                "timeline": timeline,
-            },
+    job = enqueue_background_job(
+        owner=request.user,
+        kind=BackgroundJob.KIND_LEARNING_PATH,
+        title=f"Roadmap: {goal}",
+        payload={
+            "goal": goal,
+            "model": model,
+            "experience_level": experience_level,
+            "weekly_hours": weekly_hours,
+            "timeline": timeline,
         },
-        status=200,
     )
+    return JsonResponse({"job": serialize_background_job(job)}, status=202)
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def create_roast(request):
+    payload = parse_request_data(request)
+    content = (payload.get("content") or "").strip()
+    content_type = (payload.get("content_type") or "auto").strip().lower()
+    language = (payload.get("language") or "english").strip().lower()
+    improvement_goal = (payload.get("improvement_goal") or "").strip()
+
+    if not content:
+        return json_error("Something to roast is required.")
+
+    if content_type not in {"auto", "code", "writing", "message"}:
+        return json_error("Please choose a valid roast type.")
+    if language not in {"english", "hindi", "nepali"}:
+        return json_error("Please choose a valid roast language.")
+
+    model = "qwen3.5"
+    available_keys = {item["key"] for item in list_models()}
+    if model not in available_keys:
+        return json_error("Roast mode is unavailable right now.")
+
+    title_seed = content.splitlines()[0][:60].strip() or "Untitled roast"
+    job = enqueue_background_job(
+        owner=request.user,
+        kind=BackgroundJob.KIND_ROAST,
+        title=f"Roast: {title_seed}",
+        payload={
+            "content": content,
+            "content_type": content_type,
+            "language": language,
+            "improvement_goal": improvement_goal,
+            "model": model,
+        },
+    )
+    return JsonResponse({"job": serialize_background_job(job)}, status=202)
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def create_fortune(request):
+    payload = parse_request_data(request)
+    question = (payload.get("question") or "").strip()
+    focus_area = (payload.get("focus_area") or "general").strip().lower()
+    language = (payload.get("language") or "english").strip().lower()
+
+    if not question:
+        return json_error("A question for the fortune teller is required.")
+    if focus_area not in {"general", "love", "career", "money", "study", "friendship"}:
+        return json_error("Please choose a valid fortune focus area.")
+    if language not in {"english", "hindi", "nepali"}:
+        return json_error("Please choose a valid fortune language.")
+
+    model = "deepseek-v3.1"
+    available_keys = {item["key"] for item in list_models()}
+    if model not in available_keys:
+        return json_error("Fortune Teller Mode is unavailable right now.")
+
+    title_seed = question.splitlines()[0][:60].strip() or "Untitled reading"
+    job = enqueue_background_job(
+        owner=request.user,
+        kind=BackgroundJob.KIND_FORTUNE,
+        title=f"Fortune: {title_seed}",
+        payload={
+            "question": question,
+            "focus_area": focus_area,
+            "language": language,
+            "model": model,
+        },
+    )
+    return JsonResponse({"job": serialize_background_job(job)}, status=202)
 
 
 @login_required_json
@@ -619,7 +792,7 @@ def upload_chat_document(request):
         return json_error("Only PDF files are supported right now. Image chat needs OCR setup first.")
 
     if uploaded_file.size > MAX_DOCUMENT_UPLOAD_BYTES:
-        return json_error("PDF size must be 10 MB or less.")
+        return json_error("PDF size must be 100 MB or less.")
 
     if session_id:
         session = get_owned_session_or_404(request, session_id)
@@ -656,7 +829,8 @@ def upload_chat_document(request):
         None,
     )
     if duplicate_document is not None:
-        session.documents.exclude(id=duplicate_document.id).filter(is_active=True).update(is_active=False)
+        deactivate_session_documents(session, exclude_id=duplicate_document.id)
+        deactivate_session_images(session)
         if not duplicate_document.is_active:
             duplicate_document.is_active = True
             duplicate_document.save(update_fields=["is_active"])
@@ -680,40 +854,177 @@ def upload_chat_document(request):
         file=uploaded_file,
         filename=uploaded_file.name,
         file_hash=uploaded_file_hash,
-        is_active=False,
+        is_active=True,
+        processing_status=ChatDocument.STATUS_QUEUED,
+        processing_error="",
     )
-
-    try:
-        chunks = extract_pdf_chunks(document.file.path)
-    except Exception:
-        document.file.delete(save=False)
-        document.delete()
-        raise
-
-    if not chunks:
-        document.file.delete(save=False)
-        document.delete()
-        return json_error("No readable text was found in this PDF.")
-
-    replace_document_chunks(document, chunks)
-    document.extracted_characters = sum(len(chunk["content"]) for chunk in chunks)
-    ChatDocument.objects.filter(session=session, is_active=True).update(is_active=False)
-    document.is_active = True
-    document.save(update_fields=["extracted_characters", "is_active"])
+    deactivate_session_documents(session, exclude_id=document.id)
+    deactivate_session_images(session)
 
     clear_history_cache(session.id)
     session.updated_at = timezone.now()
     session.save(update_fields=["updated_at"])
 
+    job = enqueue_background_job(
+        owner=request.user,
+        kind=BackgroundJob.KIND_DOCUMENT_INGEST,
+        title=f"PDF: {document.filename}",
+        session=session,
+        document=document,
+        payload={
+            "session_id": session.id,
+            "document_id": document.id,
+            "filename": document.filename,
+        },
+    )
+
     return JsonResponse(
         {
             "session": serialize_session(session),
-            "document": {
-                **serialize_document(document),
-                "chunk_count": len(chunks),
-            },
+            "document": serialize_document(document),
+            "job": serialize_background_job(job),
         },
-        status=201,
+        status=202,
+    )
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def upload_chat_image(request):
+    uploaded_files = request.FILES.getlist("files") or []
+    if not uploaded_files:
+        single_file = request.FILES.get("file")
+        if single_file is not None:
+            uploaded_files = [single_file]
+    session_id = (request.POST.get("session_id") or "").strip()
+    requested_model = (request.POST.get("model") or "").strip()
+
+    if not uploaded_files:
+        return json_error("Please choose at least one image to upload.")
+
+    total_upload_bytes = sum(item.size for item in uploaded_files)
+    if total_upload_bytes > MAX_IMAGE_UPLOAD_BYTES:
+        return json_error("Selected images must be 50 MB or less in total.")
+
+    for uploaded_file in uploaded_files:
+        content_type = uploaded_file.content_type or ""
+        if not content_type.startswith("image/"):
+            return json_error("Only image files are supported for vision chat.")
+
+    if session_id:
+        session = get_owned_session_or_404(request, session_id)
+        if session is None:
+            return json_error("Session not found.", status=404)
+        model_key = session.model
+    else:
+        model_key = requested_model
+        if not model_key:
+            return json_error("Please choose a vision-capable model first.")
+        available_keys = {item["key"] for item in list_models()}
+        if model_key not in available_keys:
+            return json_error("Please choose a valid model.")
+        session = None
+
+    if not supports_vision(model_key):
+        return json_error("This model does not support image chat. Choose one of the unlocked vision models.")
+
+    if session is None:
+        session = ChatSession.objects.create(
+            owner=request.user,
+            model=model_key,
+            title=fallback_title(uploaded_files[0].name.rsplit(".", 1)[0]),
+        )
+
+    existing_images = list(session.images.all())
+    selected_images = []
+    reused_count = 0
+
+    for uploaded_file in uploaded_files:
+        uploaded_file_hash = hash_uploaded_file(uploaded_file)
+        duplicate_image = next(
+            (
+                image
+                for image in existing_images
+                if ensure_image_file_hash(image) == uploaded_file_hash
+            ),
+            None,
+        )
+        if duplicate_image is not None:
+            reused_count += 1
+            if not duplicate_image.is_active:
+                duplicate_image.is_active = True
+                duplicate_image.save(update_fields=["is_active"])
+            selected_images.append(duplicate_image)
+            continue
+
+        content_type = uploaded_file.content_type or ""
+        image = ChatImage.objects.create(
+            session=session,
+            file=uploaded_file,
+            filename=uploaded_file.name,
+            file_hash=uploaded_file_hash,
+            content_type=content_type,
+            is_active=True,
+        )
+        existing_images.append(image)
+        selected_images.append(image)
+
+    active_ids = {image.id for image in session.get_active_images()}
+    active_ids.update(image.id for image in selected_images)
+    deactivate_session_images(session, exclude_ids=active_ids)
+    deactivate_session_documents(session)
+
+    activation_base = timezone.now()
+    for offset, image in enumerate(selected_images):
+        image.is_active = True
+        image.activated_at = activation_base + timedelta(microseconds=offset)
+        image.save(update_fields=["is_active", "activated_at"])
+
+    clear_history_cache(session.id)
+    session.updated_at = timezone.now()
+    session.save(update_fields=["updated_at"])
+
+    session = ordered_sessions_for_user(request.user).filter(id=session.id).first() or session
+
+    return JsonResponse(
+        {
+            "session": serialize_session(session),
+            "images": serialize_image_list(selected_images),
+            "image": serialize_image(selected_images[0]) if selected_images else None,
+            "reused_count": reused_count,
+        },
+        status=200 if reused_count == len(selected_images) else 201,
+    )
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def select_chat_image(request, session_id, image_id):
+    session = get_owned_session_or_404(request, session_id)
+    if session is None:
+        return json_error("Session not found.", status=404)
+
+    image = session.images.filter(id=image_id).first()
+    if image is None:
+        return json_error("Image not found.", status=404)
+
+    deactivate_session_documents(session)
+    if not image.is_active:
+        image.is_active = True
+    image.activated_at = timezone.now()
+    image.save(update_fields=["is_active", "activated_at"])
+
+    clear_history_cache(session.id)
+    session.updated_at = timezone.now()
+    session.save(update_fields=["updated_at"])
+
+    session = ordered_sessions_for_user(request.user).filter(id=session.id).first() or session
+    return JsonResponse(
+        {
+            "session": serialize_session(session),
+            "image": serialize_image(image),
+        },
+        status=200,
     )
 
 
@@ -728,7 +1039,8 @@ def select_chat_document(request, session_id, document_id):
     if document is None:
         return json_error("Document not found.", status=404)
 
-    session.documents.exclude(id=document.id).filter(is_active=True).update(is_active=False)
+    deactivate_session_documents(session, exclude_id=document.id)
+    deactivate_session_images(session)
     if not document.is_active:
         document.is_active = True
         document.save(update_fields=["is_active"])
@@ -745,6 +1057,139 @@ def select_chat_document(request, session_id, document_id):
         },
         status=200,
     )
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def deactivate_chat_image(request, session_id, image_id):
+    session = get_owned_session_or_404(request, session_id)
+    if session is None:
+        return json_error("Session not found.", status=404)
+
+    image = session.images.filter(id=image_id).first()
+    if image is None:
+        return json_error("Image not found.", status=404)
+
+    if image.is_active:
+        image.is_active = False
+        image.activated_at = None
+        image.save(update_fields=["is_active", "activated_at"])
+
+    clear_history_cache(session.id)
+    session.updated_at = timezone.now()
+    session.save(update_fields=["updated_at"])
+
+    session = ordered_sessions_for_user(request.user).filter(id=session.id).first() or session
+    return JsonResponse(
+        {
+            "session": serialize_session(session),
+            "image": serialize_image(image),
+        },
+        status=200,
+    )
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def deactivate_all_chat_images(request, session_id):
+    session = get_owned_session_or_404(request, session_id)
+    if session is None:
+        return json_error("Session not found.", status=404)
+
+    session.images.filter(is_active=True).update(is_active=False, activated_at=None)
+
+    clear_history_cache(session.id)
+    session.updated_at = timezone.now()
+    session.save(update_fields=["updated_at"])
+
+    session = ordered_sessions_for_user(request.user).filter(id=session.id).first() or session
+    return JsonResponse(
+        {
+            "session": serialize_session(session),
+            "success": True,
+        },
+        status=200,
+    )
+
+
+@login_required_json
+@require_http_methods(["POST"])
+def deactivate_chat_document(request, session_id, document_id):
+    session = get_owned_session_or_404(request, session_id)
+    if session is None:
+        return json_error("Session not found.", status=404)
+
+    document = session.documents.filter(id=document_id).first()
+    if document is None:
+        return json_error("Document not found.", status=404)
+
+    if document.is_active:
+        document.is_active = False
+        document.save(update_fields=["is_active"])
+
+    clear_history_cache(session.id)
+    session.updated_at = timezone.now()
+    session.save(update_fields=["updated_at"])
+
+    session = ordered_sessions_for_user(request.user).filter(id=session.id).first() or session
+    return JsonResponse(
+        {
+            "session": serialize_session(session),
+            "document": serialize_document(document),
+        },
+        status=200,
+    )
+
+
+@login_required_json
+@require_http_methods(["DELETE"])
+def delete_chat_image(request, session_id, image_id):
+    session = get_owned_session_or_404(request, session_id)
+    if session is None:
+        return json_error("Session not found.", status=404)
+
+    image = session.images.filter(id=image_id).first()
+    if image is None:
+        return json_error("Image not found.", status=404)
+
+    image.file.delete(save=False)
+    image.delete()
+
+    clear_history_cache(session.id)
+    session.updated_at = timezone.now()
+    session.save(update_fields=["updated_at"])
+
+    session = ordered_sessions_for_user(request.user).filter(id=session.id).first() or session
+    return JsonResponse({"session": serialize_session(session), "success": True}, status=200)
+
+
+@login_required_json
+@require_http_methods(["DELETE"])
+def delete_chat_document(request, session_id, document_id):
+    session = get_owned_session_or_404(request, session_id)
+    if session is None:
+        return json_error("Session not found.", status=404)
+
+    document = session.documents.filter(id=document_id).first()
+    if document is None:
+        return json_error("Document not found.", status=404)
+
+    was_active = document.is_active
+    document.file.delete(save=False)
+    document.delete()
+
+    if was_active:
+        next_document = session.documents.order_by("-uploaded_at").first()
+        if next_document is not None and not next_document.is_active:
+            next_document.is_active = True
+            next_document.save(update_fields=["is_active"])
+
+    clear_history_cache(session.id)
+    session.updated_at = timezone.now()
+    session.save(update_fields=["updated_at"])
+
+    session = ordered_sessions_for_user(request.user).filter(id=session.id).first() or session
+    return JsonResponse({"session": serialize_session(session), "success": True}, status=200)
 
 
 @login_required_json
@@ -773,9 +1218,26 @@ def chat_post(request):
             title=build_title(message),
         )
 
-    response, usage = conversation_chain(model, message, session_id=session.id)
+    active_images = session.get_active_images()
+    if active_images and not supports_vision(session.model):
+        return json_error("This chat's model does not support image questions. Start a vision-capable chat first.")
+    active_document = session.get_active_document()
+    if active_document and active_document.processing_status != ChatDocument.STATUS_READY:
+        if active_document.processing_status == ChatDocument.STATUS_FAILED:
+            detail = active_document.processing_error or "The selected PDF could not be processed."
+            return json_error(detail)
+        return json_error("The selected PDF is still processing in the background. Please wait a moment and try again.")
+
+    response, usage = conversation_chain(
+        model,
+        message,
+        session_id=session.id,
+        image_attachments=active_images or None,
+    )
     conversation = ChatConversations.objects.create(
         session=session,
+        image_attachment=active_images[0] if active_images else None,
+        image_attachments_snapshot=snapshot_images(active_images),
         user_message=message,
         ai_message=response,
         input_tokens=usage.get("input_tokens", 0),
@@ -829,6 +1291,16 @@ def chat_stream(request):
         )
         created_new_session = True
 
+    active_images = session.get_active_images()
+    if active_images and not supports_vision(session.model):
+        return json_error("This chat's model does not support image questions. Start a vision-capable chat first.")
+    active_document = session.get_active_document()
+    if active_document and active_document.processing_status != ChatDocument.STATUS_READY:
+        if active_document.processing_status == ChatDocument.STATUS_FAILED:
+            detail = active_document.processing_error or "The selected PDF could not be processed."
+            return json_error(detail)
+        return json_error("The selected PDF is still processing in the background. Please wait a moment and try again.")
+
     stream_id = uuid.uuid4().hex
 
     def event_stream():
@@ -849,6 +1321,7 @@ def chat_stream(request):
                 message,
                 session_id=session.id,
                 stream_id=stream_id,
+                image_attachments=active_images or None,
             ):
                 if event["type"] == "chunk":
                     yield sse_event("chunk", {"content": event["content"]})
@@ -866,6 +1339,8 @@ def chat_stream(request):
         if response_text:
             conversation = ChatConversations.objects.create(
                 session=session,
+                image_attachment=active_images[0] if active_images else None,
+                image_attachments_snapshot=snapshot_images(active_images),
                 user_message=message,
                 ai_message=final_payload["content"],
                 input_tokens=usage.get("input_tokens", 0),
@@ -930,6 +1405,7 @@ def regenerate_message(request, session_id, conversation_id):
         conversation.user_message,
         session_id=session.id,
         history=history,
+        image_attachments=resolve_conversation_image_attachments(conversation),
     )
 
     conversation.ai_message = response
@@ -995,6 +1471,7 @@ def edit_message(request, session_id, conversation_id):
         updated_message,
         session_id=session.id,
         history=history,
+        image_attachments=resolve_conversation_image_attachments(conversation),
     )
 
     conversation.user_message = updated_message
@@ -1127,14 +1604,25 @@ __all__ = [
     "login_user",
     "logout_user",
     "models_catalog",
+    "background_job_list",
+    "background_job_detail",
     "learning_quiz_sessions",
     "learning_quiz_detail",
+    "delete_learning_quiz",
     "create_learning_quiz",
     "answer_learning_quiz_question",
     "create_learning_path",
+    "create_roast",
+    "create_fortune",
     "chat_post",
     "upload_chat_document",
+    "upload_chat_image",
     "select_chat_document",
+    "select_chat_image",
+    "deactivate_chat_document",
+    "deactivate_chat_image",
+    "delete_chat_document",
+    "delete_chat_image",
     "chat_stream",
     "chat_sessions",
     "chat_history_conversations",
