@@ -12,10 +12,12 @@ from .langchain import (
     clear_history_cache,
     generate_fortune_reading,
     generate_learning_path,
+    generate_movie_recommendations,
     generate_quiz_questions,
     generate_roast_analysis,
 )
 from .models import BackgroundJob, ChatDocument, ChatSession, LearningQuizQuestion, LearningQuizSession
+from .movies import fetch_tmdb_movie_candidates, fetch_tmdb_movie_extras
 
 
 POLL_INTERVAL_SECONDS = 1.0
@@ -216,6 +218,48 @@ def build_fortune_job(job):
     }
 
 
+def build_movie_recommendation_job(job):
+    payload = job.payload or {}
+    mood = str(payload.get("mood") or "").strip()
+    genre = str(payload.get("genre") or "").strip()
+    country = str(payload.get("country") or "").strip()
+    extra_preferences = str(payload.get("extra_preferences") or "").strip()
+    model = str(payload.get("model") or "gemma4").strip()
+
+    candidates = fetch_tmdb_movie_candidates(
+        mood=mood,
+        genre=genre,
+        country=country,
+        extra_preferences=extra_preferences,
+        limit=24,
+    )
+    recommendation = generate_movie_recommendations(
+        model,
+        mood=mood,
+        genre=genre,
+        country=country,
+        extra_preferences=extra_preferences,
+        candidates=candidates,
+    )
+    enriched_movies = []
+    for movie in recommendation.get("picks") or []:
+        extras = fetch_tmdb_movie_extras(movie.get("id"))
+        enriched_movies.append({**movie, **extras})
+
+    return {
+        "movies": {
+            **recommendation,
+            "picks": enriched_movies,
+        },
+        "meta": {
+            "mood": mood,
+            "genre": genre,
+            "country": country,
+            "model": model,
+        },
+    }
+
+
 def process_document_job(job):
     document = ChatDocument.objects.filter(id=job.document_id).select_related("session").first()
     if document is None:
@@ -263,6 +307,8 @@ def run_job(job_id):
             result = build_roast_job(job)
         elif job.kind == BackgroundJob.KIND_FORTUNE:
             result = build_fortune_job(job)
+        elif job.kind == BackgroundJob.KIND_MOVIE_RECOMMENDATION:
+            result = build_movie_recommendation_job(job)
         elif job.kind == BackgroundJob.KIND_DOCUMENT_INGEST:
             result = process_document_job(job)
         else:

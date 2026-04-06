@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from .documents import build_document_context
 from .models import (
+    BackgroundJob,
     ChatConversations,
     ChatDocument,
     ChatImage,
@@ -420,6 +421,82 @@ class ChatPrivacyTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["job"]["kind"], "learning_path")
         self.assertEqual(payload["job"]["status"], "queued")
+
+    def test_movie_recommendation_creation_returns_background_job_locked_to_gemma4(self):
+        self.client.force_login(self.owner)
+
+        response = self.client.post(
+            "/api/movie-recommendations/",
+            data=json.dumps({
+                "mood": "Feel-good and uplifting",
+                "genre": "Comedy",
+                "country": "India",
+                "extra_preferences": "Warm ending",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(payload["job"]["kind"], "movie_recommendation")
+        self.assertEqual(payload["job"]["payload"]["model"], "gemma4")
+        self.assertEqual(payload["job"]["payload"]["mood"], "Feel-good and uplifting")
+
+    @patch("app.background.generate_movie_recommendations")
+    @patch("app.background.fetch_tmdb_movie_candidates")
+    def test_movie_recommendation_background_job_builds_result(self, mocked_fetch, mocked_generate):
+        mocked_fetch.return_value = [
+            {
+                "id": 11,
+                "title": "Movie One",
+                "year": "2024",
+                "rating": 8.2,
+                "overview": "Overview",
+                "original_language": "en",
+                "poster_url": "https://example.com/poster.jpg",
+                "backdrop_url": "",
+                "tmdb_url": "https://www.themoviedb.org/movie/11",
+            }
+        ]
+        mocked_generate.return_value = {
+            "title": "Tonight's perfect picks",
+            "subtitle": "Great match for your mood.",
+            "picks": [
+                {
+                    "id": 11,
+                    "title": "Movie One",
+                    "year": "2024",
+                    "rating": 8.2,
+                    "overview": "Overview",
+                    "original_language": "en",
+                    "poster_url": "https://example.com/poster.jpg",
+                    "backdrop_url": "",
+                    "tmdb_url": "https://www.themoviedb.org/movie/11",
+                    "why": "Warm and uplifting.",
+                }
+            ],
+        }
+        job = BackgroundJob.objects.create(
+            owner=self.owner,
+            kind=BackgroundJob.KIND_MOVIE_RECOMMENDATION,
+            title="Movies: uplifting",
+            payload={
+                "mood": "uplifting",
+                "genre": "Comedy",
+                "country": "India",
+                "extra_preferences": "Warm ending",
+                "model": "gemma4",
+            },
+        )
+
+        from .background import build_movie_recommendation_job
+
+        result = build_movie_recommendation_job(job)
+
+        self.assertEqual(result["movies"]["title"], "Tonight's perfect picks")
+        self.assertEqual(result["movies"]["picks"][0]["title"], "Movie One")
+        mocked_fetch.assert_called_once()
+        mocked_generate.assert_called_once()
 
     def test_roast_mode_creation_returns_background_job_locked_to_qwen35(self):
         self.client.force_login(self.owner)

@@ -65,6 +65,25 @@ const FORTUNE_FOCUS_OPTIONS = [
   { value: "study", label: "Study" },
   { value: "friendship", label: "Friendship" },
 ];
+const MOVIE_GENRE_OPTIONS = [
+  { value: "Action", label: "Action" },
+  { value: "Adventure", label: "Adventure" },
+  { value: "Animation", label: "Animation" },
+  { value: "Comedy", label: "Comedy" },
+  { value: "Crime", label: "Crime" },
+  { value: "Documentary", label: "Documentary" },
+  { value: "Drama", label: "Drama" },
+  { value: "Family", label: "Family" },
+  { value: "Fantasy", label: "Fantasy" },
+  { value: "History", label: "History" },
+  { value: "Horror", label: "Horror" },
+  { value: "Music", label: "Music" },
+  { value: "Mystery", label: "Mystery" },
+  { value: "Romance", label: "Romance" },
+  { value: "Science Fiction", label: "Science Fiction" },
+  { value: "Thriller", label: "Thriller" },
+  { value: "War", label: "War" },
+];
 
 function getCsrfToken() {
   const cookie = document.cookie
@@ -1077,7 +1096,16 @@ function BrandIdentity({ branding, subtitle, compact = false }) {
   );
 }
 
-function SidebarNav({ currentPage, onOpenChats, onOpenProfile, onOpenQuiz, onOpenLearningPath, onOpenRoast, onOpenFortune }) {
+function SidebarNav({
+  currentPage,
+  onOpenChats,
+  onOpenProfile,
+  onOpenQuiz,
+  onOpenLearningPath,
+  onOpenRoast,
+  onOpenFortune,
+  onOpenMovies,
+}) {
   return (
     <div className="sidebar-nav">
       <button
@@ -1127,6 +1155,14 @@ function SidebarNav({ currentPage, onOpenChats, onOpenProfile, onOpenQuiz, onOpe
       >
         <i className="bi bi-stars" />
         Fortune
+      </button>
+      <button
+        className={`nav-chip nav-chip-wide ${currentPage === "movies" ? "active" : ""}`}
+        type="button"
+        onClick={onOpenMovies}
+      >
+        <i className="bi bi-film" />
+        AI movie recommendation
       </button>
     </div>
   );
@@ -1331,6 +1367,7 @@ function SessionList({
   onOpenLearningPath,
   onOpenRoast,
   onOpenFortune,
+  onOpenMovies,
   onSelect,
   onTogglePin,
   onDelete,
@@ -1358,6 +1395,7 @@ function SessionList({
           onOpenLearningPath={onOpenLearningPath}
           onOpenRoast={onOpenRoast}
           onOpenFortune={onOpenFortune}
+          onOpenMovies={onOpenMovies}
         />
         <button className="primary-button full-width" type="button" onClick={onNewChat} disabled={busy}>
           <i className="bi bi-plus-lg" />
@@ -2437,6 +2475,287 @@ function FortunePage({
   );
 }
 
+function MovieModeCard({
+  form,
+  loading,
+  pendingJob,
+  onFormChange,
+  onSubmit,
+}) {
+  return (
+    <section className="learn-card movie-card movie-form-card">
+      <div className="section-heading">
+        <span><i className="bi bi-film" /> AI movie recommendations</span>
+        <span>Gemma 4 + TMDB</span>
+      </div>
+      <p className="small-note">
+        Describe the vibe you want, and the app will fetch TMDB candidates before Gemma 4 curates the best 6-8 picks.
+      </p>
+
+      <form className="learn-form" onSubmit={onSubmit}>
+        <div className="movie-form-grid">
+          <label className="learn-form-field">
+            <span>Mood</span>
+            <input
+              name="mood"
+              value={form.mood}
+              onChange={onFormChange}
+              placeholder="Cozy, intense, uplifting, emotional..."
+              required
+            />
+          </label>
+          <label className="learn-form-field">
+            <span>Genre</span>
+            <select name="genre" value={form.genre} onChange={onFormChange} required>
+              <option value="">Choose genre</option>
+              {MOVIE_GENRE_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="learn-form-field">
+            <span>Country</span>
+            <input
+              name="country"
+              value={form.country}
+              onChange={onFormChange}
+              placeholder="India, Korea, Japan, US..."
+              required
+            />
+          </label>
+          <label className="learn-form-field movie-form-wide">
+            <span>Extra preferences</span>
+            <textarea
+              className="roast-content-input movie-extra-input"
+              name="extra_preferences"
+              value={form.extra_preferences}
+              onChange={onFormChange}
+              placeholder="Optional: no sad ending, strong female lead, less violence, beautiful cinematography..."
+              rows={5}
+            />
+          </label>
+        </div>
+        <button className="primary-button movie-submit-button" type="submit" disabled={loading}>
+          <i className={`bi ${loading ? "bi-arrow-repeat" : "bi-stars"}`} />
+          {loading || pendingJob ? "Curating movies..." : "Get recommendations"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function MovieHighlightsCard({ result, pendingJob, onOpenModal }) {
+  const picks = result?.picks || [];
+  const preview = picks.slice(0, 3);
+
+  return (
+    <section className="learn-card movie-card movie-highlights-card">
+      <div className="section-heading">
+        <span><i className="bi bi-camera-reels" /> Recommendation board</span>
+        <span>{result ? `${picks.length} picks` : pendingJob ? "Finding titles" : "Waiting"}</span>
+      </div>
+
+      {result ? (
+        <div className="movie-preview-stack">
+          <div className="movie-preview-hero">
+            <div className="movie-preview-copy">
+              <span className="overview-label">Curated result</span>
+              <h3>{result.title}</h3>
+              <p>{result.subtitle}</p>
+            </div>
+            <button className="secondary-button" type="button" onClick={onOpenModal}>
+              <i className="bi bi-arrows-fullscreen" />
+              Open popup
+            </button>
+          </div>
+          <div className="movie-preview-grid">
+            {preview.map((movie) => (
+              <article key={movie.id} className="movie-preview-card">
+                {movie.poster_url ? (
+                  <img src={movie.poster_url} alt={movie.title} />
+                ) : (
+                  <div className="movie-poster-fallback"><i className="bi bi-film" /></div>
+                )}
+                <div className="movie-preview-meta">
+                  <strong>{movie.title}</strong>
+                  <span>{movie.year || "Unknown year"} • {movie.rating || "N/A"}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="movie-preview-empty">
+          <div className={`movie-preview-spotlight ${pendingJob ? "is-loading" : ""}`}>
+            <span className="movie-preview-glow movie-preview-glow-left" />
+            <span className="movie-preview-glow movie-preview-glow-right" />
+            <div className="movie-preview-reel">
+              <i className="bi bi-film" />
+            </div>
+          </div>
+          <h3>{pendingJob ? "Building your movie lineup" : "Colorful picks will land here"}</h3>
+          <p>
+            {pendingJob
+              ? "TMDB candidates are being gathered and Gemma 4 is matching them to your vibe."
+              : "Choose a mood, genre, and country to open a full-screen recommendation popup."}
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MovieResultsModal({ open, loading, pendingJob, result, error, onClose }) {
+  if (!open) {
+    return null;
+  }
+
+  const picks = result?.picks || [];
+
+  return (
+    <div className="movie-modal-overlay" role="dialog" aria-modal="true" aria-label="Movie recommendations">
+      <button className="movie-modal-backdrop" type="button" onClick={onClose} aria-label="Close movie recommendations" />
+      <div className="movie-modal">
+        <div className="movie-modal-head">
+          <div className="section-heading">
+            <span><i className="bi bi-camera-reels" /> AI movie recommendations</span>
+            <span>{loading || pendingJob ? "Curating" : `${picks.length} picks`}</span>
+          </div>
+          <button
+            className="secondary-button icon-button movie-modal-close"
+            type="button"
+            onClick={onClose}
+            aria-label="Close movie recommendations"
+            title="Close movie recommendations"
+          >
+            <i className="bi bi-x-lg" />
+          </button>
+        </div>
+
+        {loading || pendingJob ? (
+          <div className="movie-loading-stage">
+            <div className="movie-loader-scene" aria-hidden="true">
+              <div className="movie-loader-ring movie-loader-ring-one" />
+              <div className="movie-loader-ring movie-loader-ring-two" />
+              <div className="movie-loader-core">
+                <i className="bi bi-film" />
+              </div>
+              <span className="movie-loader-orb movie-loader-orb-a" />
+              <span className="movie-loader-orb movie-loader-orb-b" />
+              <span className="movie-loader-orb movie-loader-orb-c" />
+            </div>
+            <div className="movie-loading-copy">
+              <p className="eyebrow">Loading recommendations</p>
+              <h2>AnotherBrain.AI is matching your vibe.</h2>
+              <p>Pulling TMDB titles, reading the mood, and arranging a sharper 6-8 movie lineup.</p>
+            </div>
+          </div>
+        ) : error ? (
+          <div className="movie-modal-empty">
+            <h3>Recommendations could not be loaded</h3>
+            <p>{error}</p>
+          </div>
+        ) : result ? (
+          <div className="movie-modal-results">
+            <div className="movie-modal-intro">
+              <div>
+                <p className="eyebrow">Curated movie shelf</p>
+                <h2>{result.title}</h2>
+                <p>{result.subtitle}</p>
+              </div>
+            </div>
+            <div className="movie-card-grid">
+              {picks.map((movie, index) => (
+                <article key={movie.id || `${movie.title}-${index}`} className="movie-result-card">
+                  <div className="movie-card-poster-shell">
+                    {movie.poster_url ? (
+                      <img className="movie-card-poster" src={movie.poster_url} alt={movie.title} />
+                    ) : (
+                      <div className="movie-poster-fallback"><i className="bi bi-film" /></div>
+                    )}
+                    <span className="movie-card-rating">
+                      <i className="bi bi-star-fill" />
+                      {movie.rating || "N/A"}
+                    </span>
+                  </div>
+                  <div className="movie-card-copy">
+                    <div className="movie-card-topline">
+                      <strong>{movie.title}</strong>
+                      <span>{movie.year || "Unknown year"}</span>
+                    </div>
+                    {movie.why ? <p>{movie.why}</p> : null}
+                    <div className="movie-card-actions">
+                      {movie.imdb_url ? (
+                        <a href={movie.imdb_url} target="_blank" rel="noreferrer" className="movie-card-link">
+                          <i className="bi bi-film" />
+                          View on IMDb
+                        </a>
+                      ) : null}
+                      {movie.trailer_url ? (
+                        <a href={movie.trailer_url} target="_blank" rel="noreferrer" className="movie-card-link movie-card-link-trailer">
+                          <i className="bi bi-play-circle" />
+                          Watch trailer
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="movie-modal-empty">
+            <h3>No movie recommendations yet</h3>
+            <p>Submit the form and the popup will fill with your movie cards.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MoviesPage({
+  movieForm,
+  movieLoading,
+  movieRecommendations,
+  movieModalOpen,
+  movieModalError,
+  pendingMovieJob,
+  onMovieFormChange,
+  onGenerateMovieRecommendations,
+  onOpenMovieModal,
+  onCloseMovieModal,
+}) {
+  return (
+    <div className="movies-page">
+      <div className="learn-grid movie-grid">
+        <MovieModeCard
+          form={movieForm}
+          loading={movieLoading}
+          pendingJob={pendingMovieJob}
+          onFormChange={onMovieFormChange}
+          onSubmit={onGenerateMovieRecommendations}
+        />
+        <MovieHighlightsCard
+          result={movieRecommendations}
+          pendingJob={pendingMovieJob}
+          onOpenModal={onOpenMovieModal}
+        />
+      </div>
+      <MovieResultsModal
+        open={movieModalOpen}
+        loading={movieLoading}
+        pendingJob={pendingMovieJob}
+        result={movieRecommendations}
+        error={movieModalError}
+        onClose={onCloseMovieModal}
+      />
+    </div>
+  );
+}
+
 function DocumentPanel({
   activeSession,
   selectedModel,
@@ -3222,6 +3541,16 @@ export default function App() {
   });
   const [fortuneLoading, setFortuneLoading] = useState(false);
   const [fortuneResult, setFortuneResult] = useState(null);
+  const [movieForm, setMovieForm] = useState({
+    mood: "",
+    genre: "",
+    country: "",
+    extra_preferences: "",
+  });
+  const [movieLoading, setMovieLoading] = useState(false);
+  const [movieRecommendations, setMovieRecommendations] = useState(null);
+  const [movieModalOpen, setMovieModalOpen] = useState(false);
+  const [movieModalError, setMovieModalError] = useState("");
   const [backgroundJobs, setBackgroundJobs] = useState([]);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState("");
@@ -3232,6 +3561,8 @@ export default function App() {
   const sessionSearchInputRef = useRef(null);
   const streamAbortRef = useRef(null);
   const handledJobIdsRef = useRef(new Set());
+  const activeBackgroundJobIdsRef = useRef([]);
+  const pollingBackgroundJobsRef = useRef(false);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || null,
@@ -3271,6 +3602,16 @@ export default function App() {
     () => backgroundJobs.find((job) => job.kind === "fortune" && isBackgroundJobActive(job)) || null,
     [backgroundJobs],
   );
+  const pendingMovieJob = useMemo(
+    () => backgroundJobs.find((job) => job.kind === "movie_recommendation" && isBackgroundJobActive(job)) || null,
+    [backgroundJobs],
+  );
+
+  useEffect(() => {
+    activeBackgroundJobIdsRef.current = backgroundJobs
+      .filter(isBackgroundJobActive)
+      .map((job) => job.id);
+  }, [backgroundJobs]);
 
   function abortStreamRequest() {
     streamAbortRef.current?.abort();
@@ -3357,9 +3698,32 @@ export default function App() {
     setSessionSearchLoading(true);
     const timeoutId = window.setTimeout(async () => {
       try {
-        const payload = await apiRequest(`/api/chat/search/?q=${encodeURIComponent(query)}`, {
-          signal: controller.signal,
-        });
+        let payload = null;
+        const searchEndpoints = [
+          `/api/chat/search/?q=${encodeURIComponent(query)}`,
+          `/api/chat/sessions/search/?q=${encodeURIComponent(query)}`,
+        ];
+
+        for (const endpoint of searchEndpoints) {
+          try {
+            payload = await apiRequest(endpoint, {
+              signal: controller.signal,
+            });
+            break;
+          } catch (error) {
+            if (error.name === "AbortError") {
+              throw error;
+            }
+            if (error.status !== 404) {
+              throw error;
+            }
+          }
+        }
+
+        if (!payload) {
+          throw new Error("Search endpoint is unavailable right now.");
+        }
+
         setSessionSearchResults(payload.sessions || []);
       } catch (error) {
         if (error.name !== "AbortError") {
@@ -3536,6 +3900,15 @@ export default function App() {
         return;
       }
 
+      if (job.kind === "movie_recommendation" && job.result?.movies) {
+        setMovieRecommendations(job.result.movies);
+        setMovieLoading(false);
+        setMovieModalError("");
+        setMovieModalOpen(true);
+        showToast("Movies ready", "Your movie recommendations are ready to explore.", "success");
+        return;
+      }
+
       if (job.kind === "document_ingest") {
         try {
           await refreshSessionsOnly();
@@ -3548,6 +3921,11 @@ export default function App() {
     }
 
     if (job.status === "failed") {
+      if (job.kind === "movie_recommendation") {
+        setMovieLoading(false);
+        setMovieModalOpen(true);
+        setMovieModalError(job.error_message || "Movie recommendations failed.");
+      }
       if (job.kind === "document_ingest") {
         try {
           await refreshSessionsOnly();
@@ -3597,6 +3975,10 @@ export default function App() {
     setLearningPath(null);
     setRoastResult(null);
     setFortuneResult(null);
+    setMovieRecommendations(null);
+    setMovieModalOpen(false);
+    setMovieModalError("");
+    setMovieLoading(false);
     setBackgroundJobs([]);
     handledJobIdsRef.current = new Set();
     clearEditState();
@@ -4555,6 +4937,11 @@ export default function App() {
     setFortuneForm((current) => ({ ...current, [name]: value }));
   }
 
+  function handleMovieFormChange(event) {
+    const { name, value } = event.target;
+    setMovieForm((current) => ({ ...current, [name]: value }));
+  }
+
   async function handleGenerateLearningPath(event) {
     event.preventDefault();
     const goal = learningPathForm.goal.trim();
@@ -4636,6 +5023,46 @@ export default function App() {
     }
   }
 
+  async function handleGenerateMovieRecommendations(event) {
+    event.preventDefault();
+    const mood = movieForm.mood.trim();
+    const genre = movieForm.genre.trim();
+    const country = movieForm.country.trim();
+
+    if (!mood) {
+      showToast("Mood required", "Tell the app what kind of movie mood you want first.", "error");
+      return;
+    }
+    if (!genre) {
+      showToast("Genre required", "Choose a genre before asking for recommendations.", "error");
+      return;
+    }
+    if (!country) {
+      showToast("Country required", "Add a country so TMDB can shape the result better.", "error");
+      return;
+    }
+
+    setMovieLoading(true);
+    setMovieRecommendations(null);
+    setMovieModalError("");
+    setMovieModalOpen(true);
+
+    try {
+      const payload = await apiRequest("/api/movie-recommendations/", {
+        method: "POST",
+        body: JSON.stringify(movieForm),
+      });
+      if (payload.job) {
+        setBackgroundJobs((current) => upsertBackgroundJob(current, payload.job));
+      }
+      showToast("Movie search started", "Gemma 4 is curating your movie picks with TMDB.", "info");
+    } catch (error) {
+      setMovieLoading(false);
+      setMovieModalError(error.message);
+      showToast("Movie recommendation failed", error.message, "error");
+    }
+  }
+
   useEffect(() => {
     if (!currentUser || (currentPage !== "quiz" && currentPage !== "roast")) {
       return;
@@ -4648,21 +5075,26 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) {
-      return undefined;
-    }
-
-    const pendingJobs = backgroundJobs.filter(isBackgroundJobActive);
-    if (!pendingJobs.length) {
+      activeBackgroundJobIdsRef.current = [];
+      pollingBackgroundJobsRef.current = false;
       return undefined;
     }
 
     let cancelled = false;
 
     async function pollJobs() {
+      const activeJobIds = activeBackgroundJobIdsRef.current;
+
+      if (!activeJobIds.length || pollingBackgroundJobsRef.current) {
+        return;
+      }
+
+      pollingBackgroundJobsRef.current = true;
+
       try {
         const responses = await Promise.all(
-          pendingJobs.map((job) =>
-            apiRequest(`/api/background-jobs/${job.id}/`).catch(() => null),
+          activeJobIds.map((jobId) =>
+            apiRequest(`/api/background-jobs/${jobId}/`).catch(() => null),
           ),
         );
 
@@ -4685,17 +5117,22 @@ export default function App() {
         }
       } catch {
         // Keep background polling silent and non-disruptive.
+      } finally {
+        pollingBackgroundJobsRef.current = false;
       }
     }
 
     pollJobs();
-    const intervalId = window.setInterval(pollJobs, 1500);
+    const intervalId = window.setInterval(() => {
+      pollJobs();
+    }, 3000);
 
     return () => {
       cancelled = true;
+      pollingBackgroundJobsRef.current = false;
       window.clearInterval(intervalId);
     };
-  }, [backgroundJobs, currentUser]);
+  }, [currentUser]);
 
   useEffect(() => {
     const resolvedJobs = backgroundJobs.filter(
@@ -4898,6 +5335,10 @@ export default function App() {
               setCurrentPage("fortune");
               setSidebarOpen(false);
             }}
+            onOpenMovies={() => {
+              setCurrentPage("movies");
+              setSidebarOpen(false);
+            }}
             onSelect={(sessionId) => {
               setSidebarOpen(false);
               return handleSelectSession(sessionId);
@@ -5049,6 +5490,8 @@ export default function App() {
                           ? "Roast mode"
                           : currentPage === "fortune"
                             ? "Fortune teller mode"
+                            : currentPage === "movies"
+                              ? "Movie recommendations"
                         : activeSession?.title || "New conversation"
                 }</h1>
                 {currentPage === "profile" ? (
@@ -5070,6 +5513,10 @@ export default function App() {
                 ) : currentPage === "fortune" ? (
                   <p className="workspace-subtitle">
                     A mystical entertainment-only reading with playful omens and soft guidance.
+                  </p>
+                ) : currentPage === "movies" ? (
+                  <p className="workspace-subtitle">
+                    Describe your vibe and get colorful TMDB-powered movie picks curated by Gemma 4.
                   </p>
                 ) : null}
               </div>
@@ -5128,6 +5575,19 @@ export default function App() {
                 pendingFortuneJob={pendingFortuneJob}
                 onFortuneFormChange={handleFortuneFormChange}
                 onGenerateFortune={handleGenerateFortune}
+              />
+            ) : currentPage === "movies" ? (
+              <MoviesPage
+                movieForm={movieForm}
+                movieLoading={movieLoading}
+                movieRecommendations={movieRecommendations}
+                movieModalOpen={movieModalOpen}
+                movieModalError={movieModalError}
+                pendingMovieJob={pendingMovieJob}
+                onMovieFormChange={handleMovieFormChange}
+                onGenerateMovieRecommendations={handleGenerateMovieRecommendations}
+                onOpenMovieModal={() => setMovieModalOpen(true)}
+                onCloseMovieModal={() => setMovieModalOpen(false)}
               />
             ) : (
               <>

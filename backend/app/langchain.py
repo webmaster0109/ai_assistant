@@ -17,6 +17,7 @@ from .documents import build_document_context
 from django.core.cache import cache
 import pickle
 import re
+import time
 
 load_dotenv()
 
@@ -26,6 +27,18 @@ MAX_MESSAGES = 20
 STREAM_STOP_TTL = 600
 STREAM_TOKEN_PATTERN = re.compile(r"\s+|[^\s]+")
 JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
+TRANSIENT_GENERATION_ERROR_MARKERS = (
+  "connection aborted",
+  "connection reset by peer",
+  "temporarily unavailable",
+  "remote end closed connection",
+  "read timed out",
+  "timed out",
+  "connection refused",
+  "502",
+  "503",
+  "504",
+)
 
 def history_cache_key(session_id: str) -> str:
   return f"history_{session_id}"
@@ -175,6 +188,12 @@ def sanitize_json_text(text: str) -> str:
 
   return re.sub(r",(\s*[}\]])", r"\1", source)
 
+def is_transient_generation_error(error: Exception) -> bool:
+  message = str(error or "").strip().casefold()
+  if not message:
+    return False
+  return any(marker in message for marker in TRANSIENT_GENERATION_ERROR_MARKERS)
+
 def invoke_json_generation(model_key, system_prompt: str, user_prompt: str, temperature=0.4):
   llm = create_llm(model_key, temperature=temperature, num_predict=3072, num_ctx=8192)
   prompt = ChatPromptTemplate.from_messages([
@@ -188,10 +207,28 @@ def invoke_json_generation(model_key, system_prompt: str, user_prompt: str, temp
   last_error = None
 
   for attempt in range(3):
-    result = chain.invoke({
-      "input": current_input,
-      "history": history,
-    })
+    result = None
+    transport_error = None
+
+    for transport_attempt in range(3):
+      try:
+        result = chain.invoke({
+          "input": current_input,
+          "history": history,
+        })
+        transport_error = None
+        break
+      except Exception as error:
+        transport_error = error
+        if not is_transient_generation_error(error) or transport_attempt == 2:
+          break
+        time.sleep(0.8 * (transport_attempt + 1))
+
+    if transport_error is not None:
+      raise ValueError(
+        "The model connection was interrupted while generating the result. Please try again."
+      ) from transport_error
+
     raw_content = str(result.content or "").strip()
 
     try:
@@ -541,6 +578,88 @@ def generate_fortune_reading(model_key: str, question: str, focus_area: str = "g
     "guidance_points": guidance_points,
     "closing_line": str(payload.get("closing_line") or "").strip(),
     "disclaimer": str(payload.get("disclaimer") or "").strip() or "Entertainment only.",
+  }
+
+def generate_movie_recommendations(
+  model_key: str,
+  mood: str,
+  genre: str,
+  country: str,
+  extra_preferences: str = "",
+  candidates=None,
+):
+  movie_candidates = [item for item in (candidates or []) if item.get("id") and item.get("title")]
+  if len(movie_candidates) < 6:
+    raise ValueError("Not enough movie candidates were available for recommendation.")
+
+  candidate_lines = []
+  for item in movie_candidates[:24]:
+    candidate_lines.append(
+      (
+        f"{item['id']} | {item['title']} | {item.get('year') or 'Unknown year'} | "
+        f"rating {item.get('rating') or 0} | "
+        f"language {item.get('original_language') or 'unknown'} | "
+        f"overview: {item.get('overview') or 'No overview available.'}"
+      )
+    )
+
+  payload = invoke_json_generation(
+    model_key,
+    (
+      "You are a high-quality movie recommendation curator. "
+      "Pick only from the supplied TMDB candidate list. "
+      "Return strict JSON only with keys: title, subtitle, picks. "
+      "picks must be an array with 6 to 8 items. "
+      "Each pick must include: id, why. "
+      "The why field must be a short, vivid recommendation reason matched to the user's mood. "
+      "Never invent IDs or movies outside the candidate list."
+    ),
+    (
+      f"Mood: {mood}\n"
+      f"Genre: {genre}\n"
+      f"Country: {country}\n"
+      f"Extra preferences: {extra_preferences or 'None'}\n"
+      "Candidate list:\n"
+      + "\n".join(candidate_lines)
+    ),
+    temperature=0.55,
+  )
+
+  raw_picks = payload.get("picks") or []
+  candidate_map = {item["id"]: item for item in movie_candidates}
+  selected = []
+  seen_ids = set()
+
+  for item in raw_picks:
+    try:
+      movie_id = int(item.get("id"))
+    except (TypeError, ValueError, AttributeError):
+      continue
+    if movie_id in seen_ids or movie_id not in candidate_map:
+      continue
+    seen_ids.add(movie_id)
+    selected.append({
+      **candidate_map[movie_id],
+      "why": str(item.get("why") or "").strip(),
+    })
+    if len(selected) >= 8:
+      break
+
+  if len(selected) < 6:
+    for item in movie_candidates:
+      if item["id"] in seen_ids:
+        continue
+      selected.append({
+        **item,
+        "why": "A strong match for the vibe, genre, and viewing mood you described.",
+      })
+      if len(selected) >= 6:
+        break
+
+  return {
+    "title": str(payload.get("title") or "").strip() or "Your movie picks are ready",
+    "subtitle": str(payload.get("subtitle") or "").strip() or "Curated with IMDB discovery and Gemma 4 taste-matching.",
+    "picks": selected[:8],
   }
 
 def build_chat_system_prompt(base_prompt: str, document_context: str = "", has_image=False) -> str:

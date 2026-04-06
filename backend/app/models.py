@@ -250,12 +250,14 @@ class BackgroundJob(models.Model):
     KIND_DOCUMENT_INGEST = "document_ingest"
     KIND_ROAST = "roast"
     KIND_FORTUNE = "fortune"
+    KIND_MOVIE_RECOMMENDATION = "movie_recommendation"
     KIND_CHOICES = (
         (KIND_LEARNING_QUIZ, "Learning quiz"),
         (KIND_LEARNING_PATH, "Learning path"),
         (KIND_DOCUMENT_INGEST, "Document ingest"),
         (KIND_ROAST, "Roast"),
         (KIND_FORTUNE, "Fortune"),
+        (KIND_MOVIE_RECOMMENDATION, "Movie recommendation"),
     )
 
     STATUS_QUEUED = "queued"

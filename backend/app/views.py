@@ -821,6 +821,43 @@ def create_fortune(request):
 
 
 @login_required_json
+@require_http_methods(["POST"])
+def create_movie_recommendations(request):
+    payload = parse_request_data(request)
+    mood = (payload.get("mood") or "").strip()
+    genre = (payload.get("genre") or "").strip()
+    country = (payload.get("country") or "").strip()
+    extra_preferences = (payload.get("extra_preferences") or "").strip()
+
+    if not mood:
+        return json_error("Mood is required for movie recommendations.")
+    if not genre:
+        return json_error("Genre is required for movie recommendations.")
+    if not country:
+        return json_error("Country is required for movie recommendations.")
+
+    model = "deepseek-v3.2"
+    available_keys = {item["key"] for item in list_models()}
+    if model not in available_keys:
+        return json_error("Deepseek v3.2 movie recommendations are unavailable right now.")
+
+    title_seed = mood.splitlines()[0][:60].strip() or "Movie recommendations"
+    job = enqueue_background_job(
+        owner=request.user,
+        kind=BackgroundJob.KIND_MOVIE_RECOMMENDATION,
+        title=f"Movies: {title_seed}",
+        payload={
+            "mood": mood,
+            "genre": genre,
+            "country": country,
+            "extra_preferences": extra_preferences,
+            "model": model,
+        },
+    )
+    return JsonResponse({"job": serialize_background_job(job)}, status=202)
+
+
+@login_required_json
 @require_GET
 def chat_sessions(request):
     sessions = ordered_sessions_for_user(request.user)
