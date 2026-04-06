@@ -5,6 +5,7 @@ from datetime import timedelta
 from functools import wraps
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.db.models import OuterRef, Prefetch, Subquery
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.template.loader import render_to_string
@@ -192,7 +193,10 @@ def serialize_image_list(images):
 
 
 def serialize_session(session):
-    latest_conversation = session.conversations.order_by("-created_at").first()
+    latest_preview = getattr(session, "latest_user_message", None)
+    if latest_preview is None:
+        latest_conversation = session.conversations.order_by("-created_at", "-id").first()
+        latest_preview = latest_conversation.user_message[:120] if latest_conversation else ""
     documents = session.get_documents()
     active_document = session.get_active_document()
     images = session.get_images()
@@ -212,7 +216,7 @@ def serialize_session(session):
         "images": [serialize_image(image) for image in images],
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
-        "preview": latest_conversation.user_message[:120] if latest_conversation else "",
+        "preview": latest_preview or "",
     }
 
 
@@ -340,9 +344,25 @@ def get_public_session_or_404(share_token):
 
 
 def ordered_sessions_for_user(user):
+    latest_conversation = (
+        ChatConversations.objects.filter(session_id=OuterRef("pk"))
+        .order_by("-created_at", "-id")
+    )
     return (
         ChatSession.objects.filter(owner=user)
-        .prefetch_related("conversations", "documents", "images")
+        .annotate(
+            latest_user_message=Subquery(latest_conversation.values("user_message")[:1]),
+        )
+        .prefetch_related(
+            Prefetch(
+                "documents",
+                queryset=ChatDocument.objects.order_by("-is_active", "-uploaded_at"),
+            ),
+            Prefetch(
+                "images",
+                queryset=ChatImage.objects.order_by("-is_active", "activated_at", "-uploaded_at"),
+            ),
+        )
         .order_by("-is_pinned", "-updated_at")
     )
 
@@ -768,7 +788,7 @@ def chat_history_conversations(request, session_id):
     if session is None:
         return json_error("Session not found.", status=404)
 
-    conversations = session.conversations.order_by("created_at")
+    conversations = session.conversations.select_related("image_attachment").order_by("created_at", "id")
     return JsonResponse(
         {
             "session": serialize_session(session),
@@ -1503,7 +1523,10 @@ def edit_message(request, session_id, conversation_id):
         {
             "session": serialize_session(session),
             "message": serialize_message(conversation),
-            "messages": [serialize_message(item) for item in session.conversations.order_by("created_at", "id")],
+            "messages": [
+                serialize_message(item)
+                for item in session.conversations.select_related("image_attachment").order_by("created_at", "id")
+            ],
             "removed_count": len(later_ids),
             "usage": {
                 "input_tokens": usage.get("input_tokens", 0),
@@ -1573,7 +1596,7 @@ def public_chat_history(request, share_token):
             "session": serialize_session(session),
             "messages": [
                 serialize_message(conversation)
-                for conversation in session.conversations.order_by("created_at", "id")
+                for conversation in session.conversations.select_related("image_attachment").order_by("created_at", "id")
             ],
             "owner": {
                 "username": session.owner.username,

@@ -1,8 +1,7 @@
-from collections import Counter
-
 from django.conf import settings as django_settings
 from django.core.cache import cache
 from django.db.models import Count, Sum
+from django.db.models.functions import ExtractHour
 from django.http import JsonResponse
 from django.utils import timezone
 
@@ -58,7 +57,7 @@ def usage_stats(user=None):
   if user is not None:
     conversations = conversations.filter(session__owner=user)
 
-  stats = conversations.values('input_tokens', 'output_tokens').aggregate(
+  stats = conversations.aggregate(
     total_input_tokens=Sum('input_tokens'),
     total_output_tokens=Sum('output_tokens'),
     total_conversations=Count('id')
@@ -114,18 +113,16 @@ def profile_dashboard_stats(user=None):
   favorite_model = favorite_model_row["session__model"] if favorite_model_row else ""
   favorite_model_messages = favorite_model_row["total_messages"] if favorite_model_row else 0
 
-  hourly_counts = Counter()
-  for created_at in conversations.values_list("created_at", flat=True):
-    local_dt = timezone.localtime(created_at)
-    hourly_counts[local_dt.hour] += 1
+  hourly_row = (
+    conversations.annotate(activity_hour=ExtractHour("created_at"))
+    .values("activity_hour")
+    .annotate(total_messages=Count("id"))
+    .order_by("-total_messages", "activity_hour")
+    .first()
+  )
 
-  most_active_hour = None
-  most_active_messages = 0
-  if hourly_counts:
-    most_active_hour, most_active_messages = sorted(
-      hourly_counts.items(),
-      key=lambda item: (-item[1], item[0]),
-    )[0]
+  most_active_hour = hourly_row["activity_hour"] if hourly_row and hourly_row["activity_hour"] is not None else None
+  most_active_messages = hourly_row["total_messages"] if hourly_row else 0
 
   most_active_time = ""
   if most_active_hour is not None:

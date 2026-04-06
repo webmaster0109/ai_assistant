@@ -1,9 +1,11 @@
 import re
 
+from django.db.models import Prefetch
+
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from .models import ChatDocumentChunk, ChatSession
+from .models import ChatDocument, ChatDocumentChunk
 
 
 CHUNK_SIZE = 1200
@@ -205,11 +207,17 @@ def collect_overview_chunks(chunks):
 
 
 def build_document_context(session_id, question, limit=MAX_CONTEXT_CHUNKS):
-    session = ChatSession.objects.filter(id=session_id).prefetch_related("documents__chunks").first()
-    if session is None:
-        return ""
-
-    document = session.get_active_document()
+    document = (
+        ChatDocument.objects.filter(session_id=session_id, is_active=True)
+        .prefetch_related(
+            Prefetch(
+                "chunks",
+                queryset=ChatDocumentChunk.objects.order_by("chunk_index"),
+            )
+        )
+        .order_by("-uploaded_at")
+        .first()
+    )
     if document is None:
         return ""
 

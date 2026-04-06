@@ -61,7 +61,7 @@ def load_history_from_db(session_id: str, exclude_conversation_id=None) -> ChatM
   if exclude_conversation_id is not None:
     conversations_qs = conversations_qs.exclude(id=exclude_conversation_id)
 
-  conversations = conversations_qs.order_by('-created_at')[:MAX_MESSAGES]
+  conversations = conversations_qs.only("user_message", "ai_message", "created_at").order_by('-created_at', '-id')[:MAX_MESSAGES]
 
   for convo in reversed(conversations):
     history.add_user_message(convo.user_message)

@@ -168,6 +168,7 @@ class ChatConversations(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=["session", "-created_at"]),
+            models.Index(fields=["session", "created_at", "id"], name="app_chatconv_hist_idx"),
         ]
 
     def __str__(self):
