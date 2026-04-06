@@ -68,6 +68,7 @@ urlpatterns = [
     path('api/chat/stream/', views.chat_stream, name='chat_stream'),
     path('api/chat/streams/<str:stream_id>/stop/', views.stop_chat_stream, name='stop_chat_stream'),
     path('api/chat/sessions/', views.chat_sessions, name='chat_sessions'),
+    path('api/chat/search/', views.search_chat_sessions, name='search_chat_sessions'),
     path('api/chat/sessions/<str:session_id>/', views.delete_session, name='delete_session'),
     path('api/chat/sessions/<str:session_id>/pin/', views.toggle_session_pin, name='toggle_session_pin'),
     path('api/chat/sessions/<str:session_id>/share/', views.toggle_session_visibility, name='toggle_session_visibility'),

@@ -1320,7 +1320,6 @@ function SessionList({
   activeSessionId,
   currentPage,
   sidebarOpen,
-  searchValue,
   busy,
   pinnedCount,
   pinningSessionId,
@@ -1332,24 +1331,10 @@ function SessionList({
   onOpenLearningPath,
   onOpenRoast,
   onOpenFortune,
-  onSearchChange,
   onSelect,
   onTogglePin,
   onDelete,
 }) {
-  const filteredSessions = useMemo(() => {
-    const query = searchValue.trim().toLowerCase();
-    if (!query) {
-      return sessions;
-    }
-
-    return sessions.filter((session) =>
-      [session.title, session.model, session.preview]
-        .filter(Boolean)
-        .some((value) => value.toLowerCase().includes(query)),
-    );
-  }, [searchValue, sessions]);
-
   return (
     <aside className={`sidebar ${sidebarOpen ? "is-open" : ""}`}>
       <div className="sidebar-block">
@@ -1374,16 +1359,6 @@ function SessionList({
           onOpenRoast={onOpenRoast}
           onOpenFortune={onOpenFortune}
         />
-        <label className="sidebar-search">
-          <i className="bi bi-search" />
-          <input
-            type="search"
-            value={searchValue}
-            onChange={onSearchChange}
-            placeholder="Search chats"
-            aria-label="Search chats"
-          />
-        </label>
         <button className="primary-button full-width" type="button" onClick={onNewChat} disabled={busy}>
           <i className="bi bi-plus-lg" />
           New chat
@@ -1393,10 +1368,10 @@ function SessionList({
       <div className="sidebar-block sidebar-sessions">
         <div className="section-heading">
           <span>Recent chats</span>
-          <span>{filteredSessions.length}</span>
+          <span>{sessions.length}</span>
         </div>
-        {filteredSessions.length ? (
-          filteredSessions.map((session) => {
+        {sessions.length ? (
+          sessions.map((session) => {
             const pinLimitReached = !session.is_pinned && pinnedCount >= 3;
             const pinTitle = pinLimitReached
               ? "Only 3 chats can be pinned"
@@ -1454,11 +1429,7 @@ function SessionList({
           })
         ) : (
           <div className="empty-card">
-            <p>
-              {searchValue.trim()
-                ? "No chats match this search yet."
-                : "Your private chat history will appear here after the first message."}
-            </p>
+            <p>Your private chat history will appear here after the first message.</p>
           </div>
         )}
       </div>
@@ -3191,6 +3162,9 @@ export default function App() {
   const [usageByModel, setUsageByModel] = useState([]);
   const [draft, setDraft] = useState("");
   const [sessionSearch, setSessionSearch] = useState("");
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
+  const [sessionSearchResults, setSessionSearchResults] = useState([]);
+  const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [selectingDocumentId, setSelectingDocumentId] = useState(null);
@@ -3255,6 +3229,7 @@ export default function App() {
   const [shareNotFound, setShareNotFound] = useState(false);
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
+  const sessionSearchInputRef = useRef(null);
   const streamAbortRef = useRef(null);
   const handledJobIdsRef = useRef(new Set());
 
@@ -3334,6 +3309,74 @@ export default function App() {
     document.documentElement.style.colorScheme = theme;
     window.localStorage.setItem("ui-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (sessionSearch && !sessionSearchOpen) {
+      setSessionSearchOpen(true);
+    }
+  }, [sessionSearch, sessionSearchOpen]);
+
+  useEffect(() => {
+    if (!sessionSearchOpen) {
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      sessionSearchInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [sessionSearchOpen]);
+
+  useEffect(() => {
+    if (!sessionSearchOpen) {
+      return undefined;
+    }
+    function handleSearchKeydown(event) {
+      if (event.key === "Escape") {
+        setSessionSearchOpen(false);
+      }
+    }
+    window.addEventListener("keydown", handleSearchKeydown);
+    return () => window.removeEventListener("keydown", handleSearchKeydown);
+  }, [sessionSearchOpen]);
+
+  useEffect(() => {
+    if (!sessionSearchOpen) {
+      setSessionSearchLoading(false);
+      setSessionSearchResults([]);
+      return undefined;
+    }
+
+    const query = sessionSearch.trim();
+    if (!query) {
+      setSessionSearchLoading(false);
+      setSessionSearchResults([]);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setSessionSearchLoading(true);
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const payload = await apiRequest(`/api/chat/search/?q=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
+        setSessionSearchResults(payload.sessions || []);
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          showToast("Search failed", error.message, "error");
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setSessionSearchLoading(false);
+        }
+      }
+    }, 180);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [sessionSearch, sessionSearchOpen]);
 
   useEffect(() => () => abortStreamRequest(), []);
 
@@ -4742,13 +4785,90 @@ export default function App() {
             aria-label="Close sidebar"
           />
         ) : null}
+        {sessionSearchOpen ? (
+          <div className="workspace-search-overlay" role="dialog" aria-modal="true" aria-label="Search chats">
+            <button
+              className="workspace-search-backdrop"
+              type="button"
+              onClick={() => setSessionSearchOpen(false)}
+              aria-label="Close search"
+            />
+            <div className="workspace-search-modal">
+              <div className="workspace-search-head">
+                <label className="workspace-search-popup is-open">
+                  <i className="bi bi-search" />
+                  <input
+                    ref={sessionSearchInputRef}
+                    type="text"
+                    value={sessionSearch}
+                    onChange={(event) => setSessionSearch(event.target.value)}
+                    placeholder="Search chats"
+                    aria-label="Search chats"
+                  />
+                </label>
+                <button
+                  className="secondary-button icon-button workspace-search-close"
+                  type="button"
+                  onClick={() => setSessionSearchOpen(false)}
+                  aria-label="Close search"
+                  title="Close search"
+                >
+                  <i className="bi bi-x-lg" />
+                </button>
+              </div>
+              <div className="workspace-search-results">
+                <div className="section-heading">
+                  <span>{sessionSearch.trim() ? "Matching chats" : "Recent chats"}</span>
+                  <span>
+                    {sessionSearch.trim() ? sessionSearchResults.length : sessions.length}
+                  </span>
+                </div>
+                <div className="workspace-search-results-list">
+                  {(sessionSearch.trim() ? sessionSearchResults : sessions).length ? (
+                    (sessionSearch.trim() ? sessionSearchResults : sessions).slice(0, 20).map((session) => (
+                      <button
+                        key={session.id}
+                        className={`workspace-search-result ${session.id === activeSessionId ? "active" : ""}`}
+                        type="button"
+                        onClick={async () => {
+                          setSessionSearchOpen(false);
+                          await handleSelectSession(session.id);
+                        }}
+                      >
+                        <div className="workspace-search-result-copy">
+                          <strong>{session.title}</strong>
+                          <span>{session.model} • {formatTimestamp(session.updated_at)}</span>
+                          <p>
+                            {session.match_excerpt || session.preview || "No messages yet."}
+                          </p>
+                        </div>
+                        {session.match_source ? (
+                          <span className="workspace-search-result-badge">
+                            {session.match_source === "assistant"
+                              ? "AI reply"
+                              : session.match_source === "user"
+                                ? "Your message"
+                                : "Title"}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="empty-card workspace-search-empty">
+                      <p>No chats match this search yet.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className="app-shell">
           <SessionList
             sessions={sessions}
             activeSessionId={activeSessionId}
             currentPage={currentPage}
             sidebarOpen={sidebarOpen}
-            searchValue={sessionSearch}
             busy={sending || Boolean(regeneratingMessageId)}
             pinnedCount={pinnedCount}
             pinningSessionId={pinningSessionId}
@@ -4766,7 +4886,7 @@ export default function App() {
               setCurrentPage("quiz");
               setSidebarOpen(false);
             }}
-            onOpenLearningPath={() => {
+          onOpenLearningPath={() => {
               setCurrentPage("learning-path");
               setSidebarOpen(false);
             }}
@@ -4778,7 +4898,6 @@ export default function App() {
               setCurrentPage("fortune");
               setSidebarOpen(false);
             }}
-            onSearchChange={(event) => setSessionSearch(event.target.value)}
             onSelect={(sessionId) => {
               setSidebarOpen(false);
               return handleSelectSession(sessionId);
@@ -4815,6 +4934,15 @@ export default function App() {
                 </div>
 
                 <div className="workspace-actions">
+                  <button
+                    className={`secondary-button icon-button desktop-action ${sessionSearchOpen ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => setSessionSearchOpen(true)}
+                    title="Search chats"
+                    aria-label="Search chats"
+                  >
+                    <i className="bi bi-search" />
+                  </button>
                   {currentPage === "chat" && activeSession ? (
                     <>
                       <button

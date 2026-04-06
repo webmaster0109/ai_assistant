@@ -5,7 +5,7 @@ from datetime import timedelta
 from functools import wraps
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
-from django.db.models import OuterRef, Prefetch, Subquery
+from django.db.models import OuterRef, Prefetch, Q, Subquery
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.template.loader import render_to_string
@@ -218,6 +218,52 @@ def serialize_session(session):
         "updated_at": session.updated_at.isoformat(),
         "preview": latest_preview or "",
     }
+
+
+def build_search_excerpt(text, query, limit=140):
+    content = " ".join((text or "").split())
+    if not content:
+        return ""
+    lowered = content.lower()
+    query_lower = (query or "").strip().lower()
+    if not query_lower:
+        return content[:limit]
+    index = lowered.find(query_lower)
+    if index < 0:
+        return content[:limit]
+    start = max(index - 40, 0)
+    end = min(index + len(query_lower) + 90, len(content))
+    excerpt = content[start:end].strip()
+    if start > 0:
+        excerpt = f"...{excerpt}"
+    if end < len(content):
+        excerpt = f"{excerpt}..."
+    return excerpt
+
+
+def serialize_session_search_result(session, query):
+    result = serialize_session(session)
+    matched_conversations = list(getattr(session, "matched_conversations", []))
+    match_source = "title"
+    match_excerpt = build_search_excerpt(session.title, query)
+    query_lower = (query or "").strip().lower()
+
+    if matched_conversations:
+        matched = matched_conversations[0]
+        user_match = query_lower in (matched.user_message or "").lower()
+        ai_match = query_lower in (matched.ai_message or "").lower()
+        if user_match:
+            match_source = "user"
+            match_excerpt = build_search_excerpt(matched.user_message, query)
+        elif ai_match:
+            match_source = "assistant"
+            match_excerpt = build_search_excerpt(matched.ai_message, query)
+    elif query_lower and query_lower in (session.model or "").lower():
+        match_excerpt = build_search_excerpt(session.model, query)
+
+    result["match_source"] = match_source
+    result["match_excerpt"] = match_excerpt or result.get("preview", "")
+    return result
 
 
 def serialize_message(message):
@@ -779,6 +825,58 @@ def create_fortune(request):
 def chat_sessions(request):
     sessions = ordered_sessions_for_user(request.user)
     return JsonResponse({"sessions": [serialize_session(session) for session in sessions]}, status=200)
+
+
+@login_required_json
+@require_GET
+def search_chat_sessions(request):
+    query = (request.GET.get("q") or "").strip()
+    if not query:
+        return JsonResponse({"sessions": []}, status=200)
+
+    matching_conversations = ChatConversations.objects.filter(
+        session__owner=request.user,
+    ).filter(
+        Q(user_message__icontains=query) | Q(ai_message__icontains=query)
+    ).order_by("-created_at", "-id")
+    matching_session_ids = matching_conversations.order_by().values("session_id").distinct()
+
+    sessions = (
+        ChatSession.objects.filter(owner=request.user)
+        .filter(
+            Q(title__icontains=query)
+            | Q(model__icontains=query)
+            | Q(id__in=Subquery(matching_session_ids))
+        )
+        .annotate(
+            latest_user_message=Subquery(
+                ChatConversations.objects.filter(session_id=OuterRef("pk"))
+                .order_by("-created_at", "-id")
+                .values("user_message")[:1]
+            ),
+        )
+        .prefetch_related(
+            Prefetch(
+                "documents",
+                queryset=ChatDocument.objects.order_by("-is_active", "-uploaded_at"),
+            ),
+            Prefetch(
+                "images",
+                queryset=ChatImage.objects.order_by("-is_active", "activated_at", "-uploaded_at"),
+            ),
+            Prefetch(
+                "conversations",
+                queryset=matching_conversations,
+                to_attr="matched_conversations",
+            ),
+        )
+        .order_by("-is_pinned", "-updated_at")
+    )
+
+    return JsonResponse(
+        {"sessions": [serialize_session_search_result(session, query) for session in sessions[:20]]},
+        status=200,
+    )
 
 
 @login_required_json
