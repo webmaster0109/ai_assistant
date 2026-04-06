@@ -8,6 +8,11 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 
 from .documents import build_document_context
+from .movies import (
+    extract_release_year_filters,
+    movie_matches_country_filter,
+    movie_matches_year_filters,
+)
 from .models import (
     BackgroundJob,
     ChatConversations,
@@ -45,6 +50,32 @@ class AuthApiTests(TestCase):
     def test_chat_endpoints_require_authentication(self):
         response = self.client.get("/api/chat/sessions/")
         self.assertEqual(response.status_code, 401)
+
+
+class MovieRecommendationFilterTests(TestCase):
+    def test_extract_release_year_filters_for_after_phrase(self):
+        filters = extract_release_year_filters("released after 2022")
+        self.assertEqual(filters["year_gte"], 2023)
+        self.assertIsNone(filters["year_lte"])
+
+    def test_movie_matches_year_filters_respects_after_2022_rule(self):
+        self.assertFalse(movie_matches_year_filters({"year": "2022"}, year_gte=2023))
+        self.assertTrue(movie_matches_year_filters({"year": "2023"}, year_gte=2023))
+        self.assertTrue(movie_matches_year_filters({"year": "2025"}, year_gte=2023))
+
+    def test_movie_matches_country_filter_uses_production_country(self):
+        self.assertTrue(
+            movie_matches_country_filter(
+                {"production_countries": [{"iso_3166_1": "IN"}]},
+                "IN",
+            )
+        )
+        self.assertFalse(
+            movie_matches_country_filter(
+                {"production_countries": [{"iso_3166_1": "US"}]},
+                "IN",
+            )
+        )
 
         usage_response = self.client.get("/api/usage-stats/")
         self.assertEqual(usage_response.status_code, 401)
