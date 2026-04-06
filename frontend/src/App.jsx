@@ -4672,9 +4672,26 @@ export default function App() {
   if (!authReady) {
     return (
       <div className="loading-shell">
-        <div className="loading-card">
-          <p className="eyebrow">Loading workspace</p>
-          <h1>{branding.website_name}</h1>
+        <div className="loading-aura loading-aura-left" aria-hidden="true" />
+        <div className="loading-aura loading-aura-right" aria-hidden="true" />
+        <div className="loading-stage">
+          <div className="loading-orbit" aria-hidden="true">
+            <div className="loading-orbit-ring loading-orbit-ring-back" />
+            <div className="loading-orbit-ring loading-orbit-ring-front" />
+            <div className="loading-orbit-core">
+              <span className="loading-core-dot loading-core-dot-left" />
+              <span className="loading-core-dot loading-core-dot-right" />
+              <span className="loading-core-glow" />
+            </div>
+          </div>
+          <div className="loading-card">
+            <p className="eyebrow">Loading workspace</p>
+            <h1>{branding.website_name}</h1>
+            <p className="loading-subtitle">Preparing your assistant, memory, and private workspace.</p>
+            <div className="loading-progress" aria-hidden="true">
+              <span className="loading-progress-bar" />
+            </div>
+          </div>
         </div>
       </div>
     );
